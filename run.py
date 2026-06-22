@@ -114,6 +114,16 @@ if __name__ == '__main__':
     )
     parser.add_argument('--use_revin', action='store_true', default=False,
                         help='use RevIN (mean/std instance norm) instead of subtract-last offset')
+    parser.add_argument('--diversity_aware', action='store_true', default=False,
+                        help='SARAF-style diversity-aware retrieval: time-NMS selection + '
+                             'reliability features (top-k sim strength & neighbor disagreement)')
+    parser.add_argument('--retrieval_pool', type=int, default=100,
+                        help='candidate pool size (top-N) before diversity selection')
+    parser.add_argument('--nms_gap', type=int, default=None,
+                        help='min index gap between selected neighbors in time-NMS '
+                             '(defaults to pred_len)')
+    parser.add_argument('--rel_topk', type=int, default=5,
+                        help='number of top neighbors used to estimate similarity strength')
     parser.add_argument('--period_list', type=str, default=None,
                         help='comma-separated phase periods for multi-period routing, '
                              'e.g. "24,168". Defaults to --period_len if unset.')

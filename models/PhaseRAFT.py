@@ -34,6 +34,8 @@ class Model(nn.Module):
         self.period_len = configs.period_len
         self.use_revin = getattr(configs, 'use_revin', False)
         self.revin_eps = 1e-5
+        self.diversity_aware = getattr(configs, 'diversity_aware', False)
+        self.rel_dim = 2 if (self.diversity_aware and not self.no_retrieval) else 0
 
         self.linear_x = nn.Linear(self.seq_len, self.pred_len)
 
@@ -48,6 +50,10 @@ class Model(nn.Module):
                 topm=self.topm,
                 norm_mode='revin' if self.use_revin else 'offset',
                 eps=self.revin_eps,
+                diversity_aware=self.diversity_aware,
+                retrieval_pool=getattr(configs, 'retrieval_pool', 100),
+                nms_gap=getattr(configs, 'nms_gap', None),
+                rel_topk=getattr(configs, 'rel_topk', 5),
             )
 
         self.retrieval_pred = nn.Linear(self.pred_len, self.pred_len)
@@ -67,9 +73,11 @@ class Model(nn.Module):
                 num_routers=getattr(configs, 'phase_num_routers', 8),
                 num_heads=getattr(configs, 'phase_heads', 4),
                 dropout=getattr(configs, 'phase_attn_dropout', 0.1),
+                rel_dim=self.rel_dim,
             )
 
         self.retrieval_dict = {}
+        self.reliability_dict = {}
 
     @staticmethod
     def _parse_periods(period_list, period_len):
@@ -89,13 +97,13 @@ class Model(nn.Module):
         self.rt.prepare_dataset(train_data)
 
         print('Doing Phase-RAFT Train Retrieval')
-        train_rt = self.rt.retrieve_all(train_data, train=True, device=self.device)
+        train_rt, train_rel = self.rt.retrieve_all(train_data, train=True, device=self.device)
 
         print('Doing Phase-RAFT Valid Retrieval')
-        valid_rt = self.rt.retrieve_all(valid_data, train=False, device=self.device)
+        valid_rt, valid_rel = self.rt.retrieve_all(valid_data, train=False, device=self.device)
 
         print('Doing Phase-RAFT Test Retrieval')
-        test_rt = self.rt.retrieve_all(test_data, train=False, device=self.device)
+        test_rt, test_rel = self.rt.retrieve_all(test_data, train=False, device=self.device)
 
         del self.rt
         self.rt = None
@@ -104,6 +112,11 @@ class Model(nn.Module):
         self.retrieval_dict['train'] = train_rt.detach()
         self.retrieval_dict['valid'] = valid_rt.detach()
         self.retrieval_dict['test'] = test_rt.detach()
+
+        if train_rel is not None:
+            self.reliability_dict['train'] = train_rel.detach()
+            self.reliability_dict['valid'] = valid_rel.detach()
+            self.reliability_dict['test'] = test_rel.detach()
 
     def _retrieved_future(self, bsz, channels, index, mode, device, dtype):
         if self.no_retrieval:
@@ -115,6 +128,12 @@ class Model(nn.Module):
 
         retrieval_pred = self.retrieval_pred(pred_from_retrieval.permute(0, 2, 1)).permute(0, 2, 1)
         return retrieval_pred.reshape(bsz, self.pred_len, channels)
+
+    def _reliability(self, index, mode, device, dtype):
+        if self.rel_dim == 0 or mode not in self.reliability_dict:
+            return None
+        index_cpu = index.detach().cpu().long()
+        return self.reliability_dict[mode][index_cpu].to(device=device, dtype=dtype)  # B, rel_dim
 
     def encoder(self, x, index, mode):
         bsz, seq_len, channels = x.shape
@@ -144,7 +163,8 @@ class Model(nn.Module):
         pred = pred.reshape(bsz, self.pred_len, channels)
 
         if self.use_phase_routing:
-            pred = pred + self.phase_branch(x_norm, retrieval_pred)
+            rel = self._reliability(index, mode, x.device, x.dtype)
+            pred = pred + self.phase_branch(x_norm, retrieval_pred, rel=rel)
 
         if self.use_revin:
             return pred * sigma + mu

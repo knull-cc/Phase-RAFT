@@ -27,6 +27,10 @@ class PhaseRetrievalTool:
         topm=20,
         norm_mode='offset',
         eps=1e-5,
+        diversity_aware=False,
+        retrieval_pool=100,
+        nms_gap=None,
+        rel_topk=5,
     ):
         if period_len <= 0:
             raise ValueError('period_len must be positive')
@@ -41,6 +45,11 @@ class PhaseRetrievalTool:
         self.topm = topm
         self.norm_mode = norm_mode
         self.eps = eps
+
+        self.diversity_aware = diversity_aware
+        self.retrieval_pool = retrieval_pool
+        self.nms_gap = nms_gap if nms_gap is not None else pred_len
+        self.rel_topk = rel_topk
 
         self.key_phase_norm = None  # [T, period_len, n_periods * C]
         self.value_all = None       # [T, pred_len, C]
@@ -134,21 +143,74 @@ class PhaseRetrievalTool:
             all_masked = torch.isinf(sim).all(dim=1, keepdim=True)
             sim = torch.where(all_masked, raw_sim, sim)
 
-        topm = min(self.topm, self.n_train)
-        topm_index = torch.topk(sim, topm, dim=1).indices
-        ranking_sim = torch.full_like(sim, float('-inf'))
-
-        rows = torch.arange(sim.size(0), device=sim.device).unsqueeze(-1)
-        ranking_sim[rows, topm_index] = sim[rows, topm_index]
-
-        ranking_prob = F.softmax(ranking_sim / self.temperature, dim=1)
-        ranking_prob = ranking_prob.detach().cpu()
-
         value_flat = self.value_all.reshape(self.n_train, -1)
-        pred_from_retrieval = torch.mm(ranking_prob, value_flat)
-        pred_from_retrieval = pred_from_retrieval.reshape(bsz, self.pred_len, channels)
 
-        return pred_from_retrieval.unsqueeze(0).to(x.device)  # [1, B, P, C]
+        if not self.diversity_aware:
+            topm = min(self.topm, self.n_train)
+            topm_index = torch.topk(sim, topm, dim=1).indices
+            ranking_sim = torch.full_like(sim, float('-inf'))
+
+            rows = torch.arange(sim.size(0), device=sim.device).unsqueeze(-1)
+            ranking_sim[rows, topm_index] = sim[rows, topm_index]
+
+            ranking_prob = F.softmax(ranking_sim / self.temperature, dim=1).detach().cpu()
+            pred_from_retrieval = torch.mm(ranking_prob, value_flat)
+            pred_from_retrieval = pred_from_retrieval.reshape(bsz, self.pred_len, channels)
+            return pred_from_retrieval.unsqueeze(0).to(x.device), None
+
+        # diversity-aware: time-NMS selection within a top-N pool
+        sel_idx, sel_sim = self._nms_select(sim)            # [B, m], [B, m]
+
+        prob = F.softmax(sel_sim / self.temperature, dim=1)  # [B, m]
+        sel_values = value_flat[sel_idx.reshape(-1)].reshape(bsz, sel_idx.shape[1], -1)  # B, m, P*C
+
+        pred = torch.bmm(prob.unsqueeze(1), sel_values).squeeze(1)  # B, P*C
+        pred = pred.reshape(bsz, self.pred_len, channels)
+
+        # reliability features (both in [0,1], higher = more reliable)
+        k = min(self.rel_topk, sel_sim.shape[1])
+        sim_strength = sel_sim[:, :k].mean(dim=1).clamp(0.0, 1.0)             # B
+        disagreement = sel_values.var(dim=1, unbiased=False).mean(dim=1)     # B
+        agreement = torch.exp(-disagreement)                                  # B in (0,1]
+        rel = torch.stack([sim_strength, agreement], dim=1)                   # B, 2
+
+        return pred.unsqueeze(0).to(x.device), rel.detach().to(x.device)
+
+    def _nms_select(self, sim):
+        # sim: [B, T] (masked). Returns selected train-row indices [B, m] and their sims [B, m].
+        bsz, _ = sim.shape
+        topm = min(self.topm, self.n_train)
+        pool = min(max(self.retrieval_pool, topm), self.n_train)
+
+        pool_sim, pool_idx = torch.topk(sim, pool, dim=1)              # [B, pool] descending
+        pool_pos = self.train_indices.to(sim.device)[pool_idx]         # [B, pool] time positions
+
+        pool_idx_np = pool_idx.cpu().numpy()
+        pool_pos_np = pool_pos.cpu().numpy()
+        gap = self.nms_gap
+
+        sel_rows = torch.zeros(bsz, topm, dtype=torch.long)
+        for b in range(bsz):
+            chosen, chosen_pos = [], []
+            for j in range(pool):
+                p = pool_pos_np[b, j]
+                if all(abs(p - cp) >= gap for cp in chosen_pos):
+                    chosen.append(pool_idx_np[b, j])
+                    chosen_pos.append(p)
+                    if len(chosen) == topm:
+                        break
+            if len(chosen) < topm:  # pad with next-best regardless of gap
+                for j in range(pool):
+                    cand = pool_idx_np[b, j]
+                    if cand not in chosen:
+                        chosen.append(cand)
+                        if len(chosen) == topm:
+                            break
+            sel_rows[b] = torch.tensor(chosen[:topm], dtype=torch.long)
+
+        sel_idx = sel_rows.to(sim.device)
+        sel_sim = torch.gather(sim, 1, sel_idx)
+        return sel_idx, sel_sim
 
     def retrieve_all(self, data, train=False, device=torch.device('cpu')):
         assert self.key_phase_norm is not None
@@ -162,9 +224,14 @@ class PhaseRetrievalTool:
         )
 
         retrievals = []
+        reliabilities = []
         with torch.no_grad():
             for index, batch_x, batch_y, batch_x_mark, batch_y_mark in tqdm(rt_loader):
-                pred_from_retrieval = self.retrieve(batch_x.float().to(device), index, train=train)
-                retrievals.append(pred_from_retrieval.cpu())
+                pred, rel = self.retrieve(batch_x.float().to(device), index, train=train)
+                retrievals.append(pred.cpu())
+                if rel is not None:
+                    reliabilities.append(rel.cpu())
 
-        return torch.cat(retrievals, dim=1)  # [1, T, P, C]
+        pred_all = torch.cat(retrievals, dim=1)  # [1, T, P, C]
+        rel_all = torch.cat(reliabilities, dim=0) if reliabilities else None  # [T, 2]
+        return pred_all, rel_all

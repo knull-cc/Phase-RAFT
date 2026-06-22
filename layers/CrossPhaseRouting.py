@@ -64,16 +64,18 @@ class PhaseRoutingBranch(nn.Module):
         num_routers=8,
         num_heads=4,
         dropout=0.1,
+        rel_dim=0,
     ):
         super().__init__()
         self.period_len = period_len
         self.seq_len = seq_len
         self.pred_len = pred_len
+        self.rel_dim = rel_dim
         self.p_in = (seq_len + period_len - 1) // period_len
         self.p_out = (pred_len + period_len - 1) // period_len
 
         self.embed = nn.Sequential(
-            nn.Linear(self.p_in + self.p_out, latent_dim),
+            nn.Linear(self.p_in + self.p_out + rel_dim, latent_dim),
             nn.LayerNorm(latent_dim),
         )
         self.layers = nn.ModuleList([
@@ -95,10 +97,15 @@ class PhaseRoutingBranch(nn.Module):
         x = x.reshape(b, n_periods, self.period_len, c)
         return x.permute(0, 3, 2, 1).contiguous()
 
-    def forward(self, x_norm, retrieved):
+    def forward(self, x_norm, retrieved, rel=None):
         x_phase = self._to_phase(x_norm, self.p_in)        # B, C, pl, p_in
         r_phase = self._to_phase(retrieved, self.p_out)    # B, C, pl, p_out
         tokens = torch.cat([x_phase, r_phase], dim=-1)     # B, C, pl, p_in + p_out
+
+        if self.rel_dim > 0 and rel is not None:
+            b, c, pl, _ = tokens.shape
+            rel_feat = rel.view(b, 1, 1, self.rel_dim).expand(b, c, pl, self.rel_dim)
+            tokens = torch.cat([tokens, rel_feat], dim=-1)
 
         z = self.embed(tokens)
         for layer in self.layers:
@@ -130,6 +137,7 @@ class MultiPeriodPhaseBranch(nn.Module):
         num_routers=8,
         num_heads=4,
         dropout=0.1,
+        rel_dim=0,
     ):
         super().__init__()
         if not periods:
@@ -145,12 +153,13 @@ class MultiPeriodPhaseBranch(nn.Module):
                 num_routers=num_routers,
                 num_heads=num_heads,
                 dropout=dropout,
+                rel_dim=rel_dim,
             )
             for p in self.periods
         ])
 
-    def forward(self, x_norm, retrieved):
-        out = self.branches[0](x_norm, retrieved)
+    def forward(self, x_norm, retrieved, rel=None):
+        out = self.branches[0](x_norm, retrieved, rel=rel)
         for branch in self.branches[1:]:
-            out = out + branch(x_norm, retrieved)
+            out = out + branch(x_norm, retrieved, rel=rel)
         return out
