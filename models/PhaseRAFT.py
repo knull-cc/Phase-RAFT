@@ -1,30 +1,18 @@
-import math
-
 import torch
 import torch.nn as nn
 
 from layers.PhaseRetrieval import PhaseRetrievalTool
-from layers.PhaseTokenizer import PhaseTokenizer
-
-
-class ShallowPhasePredictor(nn.Module):
-    def __init__(self, input_periods, output_periods, hidden_dim, dropout):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(input_periods),
-            nn.Linear(input_periods, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, output_periods),
-        )
-
-    def forward(self, tokens):
-        bsz, channels, period_len, input_periods = tokens.shape
-        y = self.net(tokens.reshape(-1, input_periods))
-        return y.reshape(bsz, channels, period_len, -1)
 
 
 class Model(nn.Module):
+    """RAFT with retrieval performed in the phase-token space.
+
+    The accuracy backbone (DLinear direct path + learned fusion) is kept from
+    RAFT; only the retrieval similarity is moved to a phase-aligned space (see
+    ``layers/PhaseRetrieval.py``). The learned fusion guarantees the model can
+    fall back to the DLinear prediction when retrieval is not helpful.
+    """
+
     def __init__(self, configs, individual=False):
         super(Model, self).__init__()
         if configs.use_gpu and torch.cuda.is_available():
@@ -40,14 +28,11 @@ class Model(nn.Module):
             self.pred_len = configs.pred_len
 
         self.channels = configs.enc_in
-        self.n_period = configs.n_period
         self.topm = configs.topm
         self.no_retrieval = configs.no_retrieval
         self.period_len = configs.period_len
 
-        self.tokenizer = PhaseTokenizer(self.period_len)
-        self.input_phase_periods = self.tokenizer.n_periods(self.seq_len)
-        self.output_phase_periods = self.tokenizer.n_periods(self.pred_len)
+        self.linear_x = nn.Linear(self.seq_len, self.pred_len)
 
         self.rt = None
         if not self.no_retrieval:
@@ -55,28 +40,13 @@ class Model(nn.Module):
                 seq_len=self.seq_len,
                 pred_len=self.pred_len,
                 channels=self.channels,
-                n_period=self.n_period,
+                period_len=self.period_len,
                 temperature=configs.temperature,
                 topm=self.topm,
             )
-            self.period_num = self.rt.period_num[-1 * self.n_period:]
-        else:
-            period_num = [16, 8, 4, 2, 1]
-            self.period_num = sorted(period_num[-1 * self.n_period:], reverse=True)
 
-        module_list = [
-            nn.Linear(math.ceil(self.pred_len / group), self.pred_len)
-            for group in self.period_num
-        ]
-        self.retrieval_pred = nn.ModuleList(module_list)
-
-        hidden_dim = max(1, configs.phase_hidden)
-        self.phase_predictor = ShallowPhasePredictor(
-            input_periods=self.input_phase_periods + self.output_phase_periods,
-            output_periods=self.output_phase_periods,
-            hidden_dim=hidden_dim,
-            dropout=configs.dropout,
-        )
+        self.retrieval_pred = nn.Linear(self.pred_len, self.pred_len)
+        self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
 
         self.retrieval_dict = {}
 
@@ -104,43 +74,27 @@ class Model(nn.Module):
         self.retrieval_dict['valid'] = valid_rt.detach()
         self.retrieval_dict['test'] = test_rt.detach()
 
-    def _compress_retrieval_period(self, x, group):
-        bsz, length, channels = x.shape
-        target_len = math.ceil(length / group) * group
-        pad_len = target_len - length
-
-        if pad_len > 0:
-            pad = x[:, -1:, :].repeat(1, pad_len, 1)
-            x = torch.cat([x, pad], dim=1)
-
-        x = x.reshape(bsz, target_len // group, group, channels)
-        return x[:, :, 0, :]
-
     def _retrieved_future(self, bsz, channels, index, mode, device, dtype):
         if self.no_retrieval:
             return torch.zeros(bsz, self.pred_len, channels, device=device, dtype=dtype)
 
         index_cpu = index.detach().cpu().long()
-        pred_from_retrieval = self.retrieval_dict[mode][:, index_cpu].to(device)
+        pred_from_retrieval = self.retrieval_dict[mode][:, index_cpu].to(device)  # [1, B, P, C]
+        pred_from_retrieval = pred_from_retrieval[0]  # B, P, C
 
-        retrieval_pred_list = []
-        for i, pred_period in enumerate(pred_from_retrieval):
-            assert (bsz, self.pred_len, channels) == pred_period.shape
-            group = self.period_num[i]
-            pred_period = self._compress_retrieval_period(pred_period, group)
-            pred_period = self.retrieval_pred[i](pred_period.permute(0, 2, 1))
-            pred_period = pred_period.permute(0, 2, 1).reshape(bsz, self.pred_len, channels)
-            retrieval_pred_list.append(pred_period)
-
-        retrieval_pred_list = torch.stack(retrieval_pred_list, dim=1)
-        return retrieval_pred_list.sum(dim=1)
+        retrieval_pred = self.retrieval_pred(pred_from_retrieval.permute(0, 2, 1)).permute(0, 2, 1)
+        return retrieval_pred.reshape(bsz, self.pred_len, channels)
 
     def encoder(self, x, index, mode):
         bsz, seq_len, channels = x.shape
         assert seq_len == self.seq_len and channels == self.channels
 
-        x_norm, x_offset = self.tokenizer.offset_normalize(x)
-        retrieved_future = self._retrieved_future(
+        x_offset = x[:, -1:, :].detach()
+        x_norm = x - x_offset
+
+        x_pred_from_x = self.linear_x(x_norm.permute(0, 2, 1)).permute(0, 2, 1)  # B, P, C
+
+        retrieval_pred = self._retrieved_future(
             bsz=bsz,
             channels=channels,
             index=index,
@@ -149,12 +103,10 @@ class Model(nn.Module):
             dtype=x.dtype,
         )
 
-        x_phase = self.tokenizer.to_phase(x_norm)
-        retrieved_phase = self.tokenizer.to_phase(retrieved_future)
-        phase_tokens = torch.cat([x_phase, retrieved_phase], dim=-1)
+        pred = torch.cat([x_pred_from_x, retrieval_pred], dim=1)
+        pred = self.linear_pred(pred.permute(0, 2, 1)).permute(0, 2, 1)
+        pred = pred.reshape(bsz, self.pred_len, channels)
 
-        y_phase = self.phase_predictor(phase_tokens)
-        pred = self.tokenizer.to_time(y_phase, self.pred_len)
         return pred + x_offset
 
     def forecast(self, x_enc, index, mode):

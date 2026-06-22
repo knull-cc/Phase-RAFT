@@ -5,9 +5,11 @@ The code is build on the base of [Time-Series-Library](https://github.com/thuml/
 
 ### Required Packages
 * python == 3.9.13
-* numpy == 1.24.3
-* torch == 1.10.0
-* tqdm == 4.65.0
+
+Install dependencies with:
+```
+pip install -r requirements.txt
+```
 
 ### Usage
 1. Create ./data directory and place dataset files in ./data directory.
