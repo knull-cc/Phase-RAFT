@@ -108,6 +108,20 @@ if __name__ == '__main__':
         '--no-retrieval', '--no_retrieval', action='store_true', dest='no_retrieval',
         help='disable the retrieval branch for Phase-RAFT ablation'
     )
+    parser.add_argument(
+        '--no-phase-routing', '--no_phase_routing', action='store_false', dest='phase_routing',
+        default=True, help='disable the cross-phase routing residual branch (ablation)'
+    )
+    parser.add_argument('--latent_dim', type=int, default=64,
+                        help='latent dim of cross-phase routing branch')
+    parser.add_argument('--phase_layers', type=int, default=1,
+                        help='number of cross-phase routing layers')
+    parser.add_argument('--phase_num_routers', type=int, default=8,
+                        help='number of routers in cross-phase routing')
+    parser.add_argument('--phase_heads', type=int, default=4,
+                        help='attention heads in cross-phase routing')
+    parser.add_argument('--phase_attn_dropout', type=float, default=0.1,
+                        help='dropout in cross-phase routing branch')
 
     # optimization
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')

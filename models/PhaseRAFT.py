@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from layers.CrossPhaseRouting import PhaseRoutingBranch
 from layers.PhaseRetrieval import PhaseRetrievalTool
 
 
@@ -47,6 +48,19 @@ class Model(nn.Module):
 
         self.retrieval_pred = nn.Linear(self.pred_len, self.pred_len)
         self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
+
+        self.use_phase_routing = getattr(configs, 'phase_routing', True)
+        if self.use_phase_routing:
+            self.phase_branch = PhaseRoutingBranch(
+                period_len=self.period_len,
+                seq_len=self.seq_len,
+                pred_len=self.pred_len,
+                latent_dim=getattr(configs, 'latent_dim', 64),
+                n_layers=getattr(configs, 'phase_layers', 1),
+                num_routers=getattr(configs, 'phase_num_routers', 8),
+                num_heads=getattr(configs, 'phase_heads', 4),
+                dropout=getattr(configs, 'phase_attn_dropout', 0.1),
+            )
 
         self.retrieval_dict = {}
 
@@ -106,6 +120,9 @@ class Model(nn.Module):
         pred = torch.cat([x_pred_from_x, retrieval_pred], dim=1)
         pred = self.linear_pred(pred.permute(0, 2, 1)).permute(0, 2, 1)
         pred = pred.reshape(bsz, self.pred_len, channels)
+
+        if self.use_phase_routing:
+            pred = pred + self.phase_branch(x_norm, retrieval_pred)
 
         return pred + x_offset
 
