@@ -112,6 +112,11 @@ if __name__ == '__main__':
         '--no-phase-routing', '--no_phase_routing', action='store_false', dest='phase_routing',
         default=True, help='disable the cross-phase routing residual branch (ablation)'
     )
+    parser.add_argument('--use_revin', action='store_true', default=False,
+                        help='use RevIN (mean/std instance norm) instead of subtract-last offset')
+    parser.add_argument('--period_list', type=str, default=None,
+                        help='comma-separated phase periods for multi-period routing, '
+                             'e.g. "24,168". Defaults to --period_len if unset.')
     parser.add_argument('--latent_dim', type=int, default=64,
                         help='latent dim of cross-phase routing branch')
     parser.add_argument('--phase_layers', type=int, default=1,

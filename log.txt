@@ -1,0 +1,70 @@
+long_term_forecast_ETTh1_96_96_RAFT_ETTh1_ftM_sl96_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.3821253776550293, mae:0.4081939160823822, dtw:-999
+
+long_term_forecast_ETTh1_96_192_RAFT_ETTh1_ftM_sl96_ll48_pl192_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.41830864548683167, mae:0.42560383677482605, dtw:-999
+
+long_term_forecast_ETTh1_96_336_RAFT_ETTh1_ftM_sl96_ll48_pl336_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.4543207883834839, mae:0.44200220704078674, dtw:-999
+
+long_term_forecast_ETTh1_96_720_RAFT_ETTh1_ftM_sl96_ll48_pl720_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.4627116024494171, mae:0.4627852141857147, dtw:-999
+
+------------------------------------------------------------------------------------------------------------
+
+long_term_forecast_ETTh1_336_96_RAFT_ETTh1_ftM_sl336_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.37896034121513367, mae:0.40724995732307434, dtw:-999
+
+long_term_forecast_ETTh1_336_192_RAFT_ETTh1_ftM_sl336_ll48_pl192_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.4055168330669403, mae:0.42015618085861206, dtw:-999
+
+long_term_forecast_ETTh1_336_336_RAFT_ETTh1_ftM_sl336_ll48_pl336_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.42461255192756653, mae:0.4317795932292938, dtw:-999
+
+long_term_forecast_ETTh1_336_720_RAFT_ETTh1_ftM_sl336_ll48_pl720_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.4423227906227112, mae:0.4591103196144104, dtw:-999
+
+------------------------------------------------------------------------------------------------------------
+
+long_term_forecast_ETTh1_96_96_PhaseRAFT_ETTh1_ftM_sl96_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.37781304121017456, mae:0.4001070261001587, dtw:-999
+
+long_term_forecast_ETTh1_96_192_PhaseRAFT_ETTh1_ftM_sl96_ll48_pl192_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.4144042134284973, mae:0.42152708768844604, dtw:-999
+
+long_term_forecast_ETTh1_96_336_PhaseRAFT_ETTh1_ftM_sl96_ll48_pl336_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.45133858919143677, mae:0.44044381380081177, dtw:-999
+
+long_term_forecast_ETTh1_96_720_PhaseRAFT_ETTh1_ftM_sl96_ll48_pl720_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.4684412181377411, mae:0.46870818734169006, dtw:-999long_term_forecast_ETTh1_720_96_PhaseRAFT_ETTh1_ftM_sl720_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+
+------------------------------------------------------------------------------------------------------------
+
+long_term_forecast_ETTh1_336_96_PhaseRAFT_ETTh1_ftM_sl336_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.3776194751262665, mae:0.40063753724098206, dtw:-999
+
+long_term_forecast_ETTh1_336_192_PhaseRAFT_ETTh1_ftM_sl336_ll48_pl192_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.4065092206001282, mae:0.4185875654220581, dtw:-999
+
+long_term_forecast_ETTh1_336_336_PhaseRAFT_ETTh1_ftM_sl336_ll48_pl336_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.42658528685569763, mae:0.43213069438934326, dtw:-999
+
+long_term_forecast_ETTh1_336_720_PhaseRAFT_ETTh1_ftM_sl336_ll48_pl720_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.468231737613678, mae:0.4780938923358917, dtw:-999
+
+------------------------------------------------------------------------------------------------------------
+
+long_term_forecast_ETTh1_720_96_PhaseRAFT_ETTh1_ftM_sl720_ll48_pl192_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.37810736894607544, mae:0.4051176607608795, dtw:-999
+
+long_term_forecast_ETTh1_720_192_PhaseRAFT_ETTh1_ftM_sl720_ll48_pl192_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.40956994891166687, mae:0.4254069924354553, dtw:-999
+
+long_term_forecast_ETTh1_720_336_PhaseRAFT_ETTh1_ftM_sl720_ll48_pl336_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.4401147961616516, mae:0.4471237063407898, dtw:-999
+
+long_term_forecast_ETTh1_720_720_PhaseRAFT_ETTh1_ftM_sl720_ll48_pl720_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.479023814201355, mae:0.483705997467041, dtw:-999
+
+------------------------------------------------------------------------------------------------------------
+

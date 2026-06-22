@@ -109,3 +109,48 @@ class PhaseRoutingBranch(nn.Module):
         bsz, p_out, pl, c = y.shape
         y = y.reshape(bsz, p_out * pl, c)
         return y[:, :self.pred_len, :]
+
+
+class MultiPeriodPhaseBranch(nn.Module):
+    """Models several phase resolutions in parallel (e.g. daily 24 + weekly 168).
+
+    Each period gets its own cross-phase routing branch; their (zero-initialized)
+    residual predictions are summed. This replaces RAFT's multi-scale patch
+    decomposition with simultaneous multi-phase modeling. The total residual
+    still starts at 0, preserving the no-regression guarantee.
+    """
+
+    def __init__(
+        self,
+        periods,
+        seq_len,
+        pred_len,
+        latent_dim=64,
+        n_layers=1,
+        num_routers=8,
+        num_heads=4,
+        dropout=0.1,
+    ):
+        super().__init__()
+        if not periods:
+            raise ValueError('periods must be a non-empty list')
+        self.periods = list(periods)
+        self.branches = nn.ModuleList([
+            PhaseRoutingBranch(
+                period_len=p,
+                seq_len=seq_len,
+                pred_len=pred_len,
+                latent_dim=latent_dim,
+                n_layers=n_layers,
+                num_routers=num_routers,
+                num_heads=num_heads,
+                dropout=dropout,
+            )
+            for p in self.periods
+        ])
+
+    def forward(self, x_norm, retrieved):
+        out = self.branches[0](x_norm, retrieved)
+        for branch in self.branches[1:]:
+            out = out + branch(x_norm, retrieved)
+        return out

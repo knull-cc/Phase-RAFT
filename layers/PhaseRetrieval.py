@@ -25,9 +25,13 @@ class PhaseRetrievalTool:
         period_len=24,
         temperature=0.1,
         topm=20,
+        norm_mode='offset',
+        eps=1e-5,
     ):
         if period_len <= 0:
             raise ValueError('period_len must be positive')
+        if norm_mode not in ('offset', 'revin'):
+            raise ValueError("norm_mode must be 'offset' or 'revin'")
 
         self.seq_len = seq_len
         self.pred_len = pred_len
@@ -35,6 +39,8 @@ class PhaseRetrievalTool:
         self.period_len = period_len
         self.temperature = temperature
         self.topm = topm
+        self.norm_mode = norm_mode
+        self.eps = eps
 
         self.key_phase_norm = None  # [T, period_len, n_periods * C]
         self.value_all = None       # [T, pred_len, C]
@@ -66,13 +72,22 @@ class PhaseRetrievalTool:
 
         for i in range(len(train_data)):
             index, seq_x, seq_y, _, _ = train_data[i]
-            x_last = seq_x[-1:, :]
-            train_x_all.append(seq_x - x_last)
-            train_y_all.append(seq_y[-train_data.pred_len:] - x_last)
+            seq_x = torch.as_tensor(seq_x).float()
+            seq_y = torch.as_tensor(seq_y[-train_data.pred_len:]).float()
+
+            if self.norm_mode == 'revin':
+                mu = seq_x.mean(dim=0, keepdim=True)
+                sigma = torch.sqrt(seq_x.var(dim=0, keepdim=True, unbiased=False) + self.eps)
+                train_x_all.append((seq_x - mu) / sigma)
+                train_y_all.append((seq_y - mu) / sigma)
+            else:
+                x_last = seq_x[-1:, :]
+                train_x_all.append(seq_x - x_last)
+                train_y_all.append(seq_y - x_last)
             train_indices.append(index)
 
-        train_x_all = torch.tensor(np.stack(train_x_all, axis=0)).float()
-        train_y_all = torch.tensor(np.stack(train_y_all, axis=0)).float()
+        train_x_all = torch.stack(train_x_all, dim=0).float()
+        train_y_all = torch.stack(train_y_all, dim=0).float()
 
         self.key_phase_norm = self._phase_feature(train_x_all)
         self.value_all = train_y_all

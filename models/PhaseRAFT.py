@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from layers.CrossPhaseRouting import PhaseRoutingBranch
+from layers.CrossPhaseRouting import MultiPeriodPhaseBranch
 from layers.PhaseRetrieval import PhaseRetrievalTool
 
 
@@ -32,6 +32,8 @@ class Model(nn.Module):
         self.topm = configs.topm
         self.no_retrieval = configs.no_retrieval
         self.period_len = configs.period_len
+        self.use_revin = getattr(configs, 'use_revin', False)
+        self.revin_eps = 1e-5
 
         self.linear_x = nn.Linear(self.seq_len, self.pred_len)
 
@@ -44,6 +46,8 @@ class Model(nn.Module):
                 period_len=self.period_len,
                 temperature=configs.temperature,
                 topm=self.topm,
+                norm_mode='revin' if self.use_revin else 'offset',
+                eps=self.revin_eps,
             )
 
         self.retrieval_pred = nn.Linear(self.pred_len, self.pred_len)
@@ -51,8 +55,11 @@ class Model(nn.Module):
 
         self.use_phase_routing = getattr(configs, 'phase_routing', True)
         if self.use_phase_routing:
-            self.phase_branch = PhaseRoutingBranch(
-                period_len=self.period_len,
+            self.phase_periods = self._parse_periods(
+                getattr(configs, 'period_list', None), self.period_len
+            )
+            self.phase_branch = MultiPeriodPhaseBranch(
+                periods=self.phase_periods,
                 seq_len=self.seq_len,
                 pred_len=self.pred_len,
                 latent_dim=getattr(configs, 'latent_dim', 64),
@@ -63,6 +70,16 @@ class Model(nn.Module):
             )
 
         self.retrieval_dict = {}
+
+    @staticmethod
+    def _parse_periods(period_list, period_len):
+        if not period_list:
+            return [period_len]
+        if isinstance(period_list, (list, tuple)):
+            periods = [int(p) for p in period_list]
+        else:
+            periods = [int(p) for p in str(period_list).split(',') if str(p).strip()]
+        return periods or [period_len]
 
     def prepare_dataset(self, train_data, valid_data, test_data):
         if self.no_retrieval:
@@ -103,8 +120,13 @@ class Model(nn.Module):
         bsz, seq_len, channels = x.shape
         assert seq_len == self.seq_len and channels == self.channels
 
-        x_offset = x[:, -1:, :].detach()
-        x_norm = x - x_offset
+        if self.use_revin:
+            mu = x.mean(dim=1, keepdim=True).detach()
+            sigma = torch.sqrt(x.var(dim=1, keepdim=True, unbiased=False) + self.revin_eps).detach()
+            x_norm = (x - mu) / sigma
+        else:
+            x_offset = x[:, -1:, :].detach()
+            x_norm = x - x_offset
 
         x_pred_from_x = self.linear_x(x_norm.permute(0, 2, 1)).permute(0, 2, 1)  # B, P, C
 
@@ -124,6 +146,8 @@ class Model(nn.Module):
         if self.use_phase_routing:
             pred = pred + self.phase_branch(x_norm, retrieval_pred)
 
+        if self.use_revin:
+            return pred * sigma + mu
         return pred + x_offset
 
     def forecast(self, x_enc, index, mode):
