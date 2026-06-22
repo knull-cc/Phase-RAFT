@@ -96,13 +96,20 @@ class PhaseRetrievalTool:
 
     def _phase_corr(self, query, in_bsz=512):
         # query: [B, period_len, F] -> sim: [B, T]
+        # Averaging per-phase cosine similarity == dot product of the flattened
+        # per-phase-normalized vectors divided by period_len. Use matmul instead
+        # of einsum to avoid materializing a huge [B, K, period_len, F] tensor.
+        bsz = query.shape[0]
+        q_flat = query.reshape(bsz, -1)
+
         sims = []
         iters = math.ceil(self.n_train / in_bsz)
         for i in range(iters):
             start_idx = i * in_bsz
             end_idx = min((i + 1) * in_bsz, self.n_train)
             cur_key = self.key_phase_norm[start_idx:end_idx].to(query.device)
-            cur_sim = torch.einsum('bpf,kpf->bk', query, cur_key) / self.period_len
+            cur_key = cur_key.reshape(cur_key.shape[0], -1)
+            cur_sim = torch.matmul(q_flat, cur_key.transpose(0, 1)) / self.period_len
             sims.append(cur_sim)
         return torch.cat(sims, dim=1)
 

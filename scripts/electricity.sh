@@ -1,14 +1,15 @@
 model_name=RAFT
 extra_args="$@"
 
+# test
 root_path_name=./dataset/electricity
 data_path_name=electricity.csv
 model_id_name=Electricity
 data_name=custom
 
 
-seq_len=96
-for pred_len in 96 192 336 720
+seq_len=336
+for pred_len in 96
 do
 for random_seed in 2024
 do
