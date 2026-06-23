@@ -97,6 +97,7 @@ class Model(nn.Module):
                 residual_var_scale=configs.phase_block_residual_var_scale,
                 stride=configs.phase_block_stride,
                 bank_mode=configs.phase_block_bank_mode,
+                value_mode=configs.phase_block_value_mode,
                 query_chunk=configs.phase_block_query_chunk,
             )
 
@@ -163,6 +164,16 @@ class Model(nn.Module):
         bsz, seq_len, channels = x.shape
         assert seq_len == self.seq_len and channels == self.channels
         
+        if (
+            apply_phase_block
+            and mode == 'test'
+            and self.phase_block is not None
+            and self.phase_block.value_mode == 'future'
+        ):
+            border = self.phase_block_borders.get(mode, 0)
+            index_abs = index.to(x.device).long() + int(border)
+            return self.phase_block.forecast_direct(x, index_abs=index_abs)
+
         x_offset = x[:, -1:, :].detach()
         x_norm = x - x_offset
 

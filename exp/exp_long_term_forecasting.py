@@ -61,7 +61,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if not hasattr(core_model, 'prepare_phase_block'):
             return
 
-        print('Building PhaseBlock residual memory')
+        value_mode = getattr(self.args, 'phase_block_value_mode', 'residual')
+        print(f'Building PhaseBlock {value_mode} memory')
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
 
@@ -95,8 +96,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     )
                     outputs = outputs[:, -self.args.pred_len:, :]
                     true = batch_y[:, -self.args.pred_len:, :]
-                    residual = true - outputs
-                    core_model.add_phase_block_memory(batch_x, residual, index_abs=index_abs)
+                    if value_mode == 'future':
+                        values = true - batch_x[:, -1:, :]
+                    else:
+                        values = true - outputs
+                    core_model.add_phase_block_memory(batch_x, values, index_abs=index_abs)
 
         if self.args.phase_block_memory_source == 'train_roll_val':
             roll_start = int(len(train_data) * self.args.phase_block_train_init_ratio)

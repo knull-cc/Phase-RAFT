@@ -8,8 +8,9 @@ class PhaseBlockResidualMemory:
 
     ``full`` mode builds a global PhaseBlock bank: every memory sample
     contributes one key/value pair for each forecast step. The key is a
-    phase-aligned local time block built only from the observed lookback window;
-    the value is the base-model residual at that forecast step.
+    phase-aligned local time block built only from the observed lookback window.
+    The value can be either a residual correction or an offset-normalized future
+    trend used for direct retrieval forecasting.
     """
 
     def __init__(
@@ -29,6 +30,7 @@ class PhaseBlockResidualMemory:
         residual_var_scale=1.0,
         stride=1,
         bank_mode='full',
+        value_mode='residual',
         query_chunk=256,
         eps=1e-6,
     ):
@@ -48,6 +50,7 @@ class PhaseBlockResidualMemory:
         self.residual_var_scale = residual_var_scale
         self.stride = stride
         self.bank_mode = bank_mode
+        self.value_mode = value_mode
         self.query_chunk = query_chunk
         self.eps = eps
 
@@ -214,6 +217,24 @@ class PhaseBlockResidualMemory:
         if self.bank_mode == 'single':
             return self._correct_single(x, pred)
         return self._correct_full(x, pred, index_abs=index_abs)
+
+    def forecast_direct(self, x, index_abs=None):
+        if not self.enabled or not self.memory_ready:
+            return x[:, -1:, :].repeat(1, self.pred_len, 1)
+
+        base = torch.zeros(
+            x.shape[0],
+            self.pred_len,
+            self.channels,
+            device=x.device,
+            dtype=x.dtype,
+        )
+        trend = self._correct_single(x, base) if self.bank_mode == 'single' else self._correct_full(
+            x,
+            base,
+            index_abs=index_abs,
+        )
+        return x[:, -1:, :] + trend
 
     def _correct_single(self, x, pred):
         keys = self.keys.to(x.device)

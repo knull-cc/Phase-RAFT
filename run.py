@@ -136,6 +136,9 @@ if __name__ == '__main__':
     parser.add_argument('-phase_block', '--phase_block', '--phase-block',
                         action='store_true', dest='phase_block', default=False,
                         help='enable phase-conditioned residual corrector at test time')
+    parser.add_argument('--phase_block_as_model', '--phase-block-as-model',
+                        action='store_true', dest='phase_block_as_model', default=False,
+                        help='use PhaseBlock direct future retrieval as the test-time forecaster')
     parser.add_argument('--phase_block_periods', type=str, default=None,
                         help='comma-separated PRC periods; if unset, periods are estimated by FFT')
     parser.add_argument('--phase_block_max_periods', type=int, default=2,
@@ -161,6 +164,9 @@ if __name__ == '__main__':
     parser.add_argument('--phase_block_bank_mode', choices=['full', 'single'], default='full',
                         help='full: store one PhaseBlock residual per forecast step; '
                              'single: legacy one-key-per-window residual bank')
+    parser.add_argument('--phase_block_value_mode', choices=['residual', 'future'], default='residual',
+                        help='residual: store Y - Y_base and correct RAFT; '
+                             'future: store Y - x_last and directly forecast with PhaseBlock')
     parser.add_argument('--phase_block_query_chunk', type=int, default=256,
                         help='query chunk size for full PhaseBlock retrieval')
     parser.add_argument('--phase_block_memory_source', choices=['val', 'train_roll_val'], default='val',
@@ -242,6 +248,9 @@ if __name__ == '__main__':
     parser.add_argument('--extra_tag', type=str, default="", help="Anything extra")
 
     args = parser.parse_args()
+    if args.phase_block_as_model:
+        args.phase_block = True
+        args.phase_block_value_mode = 'future'
     if args.phase:
         args.model = 'RAFT'
         if args.retrieval_variant == 'A':
@@ -297,9 +306,10 @@ if __name__ == '__main__':
     if args.phase_fusion:
         args.des = '{}_pf{}_{}'.format(args.des, args.period_list or args.period_len, args.phase_fusion_mode)
     if args.phase_block:
-        args.des = '{}_pb{}_k{}_a{}'.format(
+        args.des = '{}_pb{}_{}_k{}_a{}'.format(
             args.des,
             args.phase_block_periods or 'fft',
+            args.phase_block_value_mode,
             args.phase_block_topk,
             args.phase_block_alpha,
         )

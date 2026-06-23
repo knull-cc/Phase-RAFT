@@ -73,3 +73,9 @@ periods by FFT:
 ```
 -phase_block --phase_block_bank_mode full --phase_block_topk 5 --phase_block_alpha 0.2
 ```
+
+To use PhaseBlock as the direct test-time forecaster, store the future trend
+`Y - x_last` instead of RAFT residuals:
+```
+-phase_block --phase_block_as_model --phase_block_bank_mode full --phase_block_periods 24
+```

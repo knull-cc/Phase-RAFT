@@ -41,7 +41,10 @@ mse:0.42461255192756653, mae:0.4317795932292938, dtw:-999
 long_term_forecast_ETTh1_336_720_RAFT_ETTh1_ftM_sl336_ll48_pl720_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
 mse:0.4423227906227112, mae:0.4591103196144104, dtw:-999
 
+
 ------------------------------------------------------------------------------------------------------------
+
+Phase-
 
 long_term_forecast_ETTh1_96_96_PhaseRAFT_ETTh1_ftM_sl96_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
 mse:0.37781304121017456, mae:0.4001070261001587, dtw:-999
@@ -96,3 +99,6 @@ mse:0.1468813419342041, mae:0.2382155954837799, dtw:-999
 
 long_term_forecast_PEMS03_96_96_RAFT_PEMS_ftM_sl96_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_retB_m20_lam0.1_tau2.0_0
 mse:0.21771983802318573, mae:0.2919045686721802, dtw:-999
+
+------------------------------------------------------------------------------------------------------------
+
