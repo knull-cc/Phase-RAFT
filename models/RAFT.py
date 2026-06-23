@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from layers.CrossPhaseRouting import MultiPeriodPhaseBranch
 from layers.Retrieval import RetrievalTool
 
 class Model(nn.Module):
@@ -56,10 +57,35 @@ class Model(nn.Module):
         ]
         self.retrieval_pred = nn.ModuleList(module_list)
         self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
+        self.phase_fusion = configs.phase_fusion
+        self.phase_branch = None
+        if self.phase_fusion:
+            self.phase_periods = self._parse_phase_periods(configs)
+            self.phase_branch = MultiPeriodPhaseBranch(
+                periods=self.phase_periods,
+                seq_len=self.seq_len,
+                pred_len=self.pred_len,
+                latent_dim=configs.latent_dim,
+                n_layers=configs.phase_layers,
+                num_routers=configs.phase_num_routers,
+                num_heads=configs.phase_heads,
+                dropout=configs.phase_attn_dropout,
+            )
 
 #         if self.task_name == 'classification':
 #             self.projection = nn.Linear(
 #                 configs.enc_in * configs.seq_len, configs.num_class)
+
+    @staticmethod
+    def _parse_phase_periods(configs):
+        if configs.period_list:
+            periods = [int(item.strip()) for item in configs.period_list.split(',') if item.strip()]
+        else:
+            periods = [configs.period_len]
+        periods = [period for period in periods if period > 0]
+        if not periods:
+            raise ValueError('phase fusion requires at least one positive period')
+        return periods
 
     def prepare_dataset(self, train_data, valid_data, test_data):
         self.rt.prepare_dataset(train_data)
@@ -111,10 +137,12 @@ class Model(nn.Module):
             retrieval_pred_list.append(pr)
 
         retrieval_pred_list = torch.stack(retrieval_pred_list, dim=1)
-        retrieval_pred_list = retrieval_pred_list.sum(dim=1)
+        retrieved_future = retrieval_pred_list.sum(dim=1)
         
-        pred = torch.cat([x_pred_from_x, retrieval_pred_list], dim=1)
+        pred = torch.cat([x_pred_from_x, retrieved_future], dim=1)
         pred = self.linear_pred(pred.permute(0, 2, 1)).permute(0, 2, 1).reshape(bsz, self.pred_len, self.channels)
+        if self.phase_branch is not None:
+            pred = pred + self.phase_branch(x_norm, retrieved_future)
         
         pred = pred + x_offset
         

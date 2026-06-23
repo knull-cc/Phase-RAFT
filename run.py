@@ -17,7 +17,8 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='RAFT',
                         help='model name, options: [RAFT]')
     parser.add_argument('-Phase', '--Phase', '--phase', action='store_true', dest='phase',
-                        help='activate phase-aware RAFT retrieval; defaults to retrieval_variant C')
+                        help='activate phase-aware RAFT retrieval and phase-domain fusion; '
+                             'defaults to retrieval_variant C')
 
     # data loader
     parser.add_argument('--data', type=str, required=True, default='ETTh1', help='dataset type')
@@ -121,10 +122,12 @@ if __name__ == '__main__':
         '--cycle', type=int, default=None,
         help='compatibility alias for --period_len'
     )
-    parser.add_argument(
-        '--no-phase-routing', '--no_phase_routing', action='store_false', dest='phase_routing',
-        default=True, help='disable the cross-phase routing residual branch (ablation)'
-    )
+    parser.add_argument('--phase_fusion', '--phase-fusion', action='store_true', default=False,
+                        help='enable phase-domain residual fusion after RAFT retrieval')
+    parser.add_argument('--no-phase-fusion', '--no_phase_fusion',
+                        '--no-phase-routing', '--no_phase_routing',
+                        action='store_true', dest='disable_phase_fusion', default=False,
+                        help='disable phase-domain fusion even when -Phase is used')
     parser.add_argument('--use_revin', action='store_true', default=False,
                         help='use RevIN (mean/std instance norm) instead of subtract-last offset')
     parser.add_argument('--diversity_aware', action='store_true', default=False,
@@ -204,6 +207,10 @@ if __name__ == '__main__':
         args.model = 'RAFT'
         if args.retrieval_variant == 'A':
             args.retrieval_variant = 'C'
+        if not args.disable_phase_fusion:
+            args.phase_fusion = True
+    if args.disable_phase_fusion:
+        args.phase_fusion = False
     if args.cycle is not None:
         args.period_len = args.cycle
     if args.phase_period is None:
@@ -226,6 +233,8 @@ if __name__ == '__main__':
             args.phase_lambda,
             args.phase_tau,
         )
+    if args.phase_fusion:
+        args.des = '{}_pf{}'.format(args.des, args.period_list or args.period_len)
 
     fix_seed = args.seed
     random.seed(fix_seed)

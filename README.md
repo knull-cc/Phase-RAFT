@@ -17,13 +17,13 @@ pip install -r requirements.txt
 ```
 python3 run.py --data [DATASET]
 ```
-3. Run phase-aware RAFT retrieval by adding `-Phase`.
+3. Run phase-aware RAFT by adding `-Phase`.
 ```
 python3 run.py --data [DATASET] -Phase
 ```
-This is shorthand for retrieval variant C:
+This is shorthand for retrieval variant C plus phase-domain fusion:
 ```
-python3 run.py --data [DATASET] --retrieval_variant C
+python3 run.py --data [DATASET] --retrieval_variant C --phase_fusion
 ```
 4. Run the provided experiment scripts.
 ```
@@ -39,4 +39,17 @@ Retrieval variants:
 Phase-aware retrieval parameters:
 ```
 --topm 20 --phase_top_m 5 --phase_lambda 0.1 --phase_tau 2 --phase_period 24
+```
+
+Phase-domain fusion can be enabled independently:
+```
+--phase_fusion --period_list 24
+```
+
+Recommended ablations:
+```
+--retrieval_variant A --topm 20
+--retrieval_variant B --topm 100 --phase_top_m 20 --phase_tau 2
+--retrieval_variant B --topm 100 --phase_top_m 20 --phase_tau 2 --phase_fusion
+--retrieval_variant C --topm 100 --phase_top_m 20 --phase_lambda 1.0 --phase_tau 2 --phase_fusion
 ```
