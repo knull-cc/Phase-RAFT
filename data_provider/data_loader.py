@@ -57,6 +57,8 @@ class Dataset_ETT_hour(Dataset):
         border2s = [12 * 30 * 24, 12 * 30 * 24 + 4 * 30 * 24, 12 * 30 * 24 + 8 * 30 * 24]
         border1 = border1s[self.set_type]
         border2 = border2s[self.set_type]
+        self.border1 = border1
+        self.border2 = border2
 
         if self.features == 'M' or self.features == 'MS':
             cols_data = df_raw.columns[1:]
@@ -150,6 +152,8 @@ class Dataset_ETT_minute(Dataset):
         border2s = [12 * 30 * 24 * 4, 12 * 30 * 24 * 4 + 4 * 30 * 24 * 4, 12 * 30 * 24 * 4 + 8 * 30 * 24 * 4]
         border1 = border1s[self.set_type]
         border2 = border2s[self.set_type]
+        self.border1 = border1
+        self.border2 = border2
 
         if self.features == 'M' or self.features == 'MS':
             cols_data = df_raw.columns[1:]
@@ -255,6 +259,8 @@ class Dataset_Custom(Dataset):
         border2s = [num_train, num_train + num_vali, len(df_raw)]
         border1 = border1s[self.set_type]
         border2 = border2s[self.set_type]
+        self.border1 = border1
+        self.border2 = border2
 
         if self.features == 'M' or self.features == 'MS':
             cols_data = df_raw.columns[1:]
@@ -350,6 +356,8 @@ class Dataset_Solar(Dataset):
         border2s = [num_train, num_train + num_vali, len(data)]
         border1 = border1s[self.set_type]
         border2 = border2s[self.set_type]
+        self.border1 = border1
+        self.border2 = border2
 
         if self.scale:
             train_data = data[border1s[0]:border2s[0]]
@@ -419,6 +427,8 @@ class Dataset_PEMS(Dataset):
         border2s = [num_train, num_train + num_vali, len(data)]
         border1 = border1s[self.set_type]
         border2 = border2s[self.set_type]
+        self.border1 = border1
+        self.border2 = border2
 
         if self.scale:
             train_data = data[border1s[0]:border2s[0]]

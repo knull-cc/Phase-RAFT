@@ -17,6 +17,11 @@ class RetrievalTool():
         n_period=3,
         temperature=0.1,
         topm=20,
+        retrieval_variant='A',
+        phase_top_m=5,
+        phase_lambda=0.1,
+        phase_tau=2.0,
+        phase_period=None,
         with_dec=False,
         return_key=False,
     ):
@@ -32,6 +37,11 @@ class RetrievalTool():
         
         self.temperature = temperature
         self.topm = topm
+        self.retrieval_variant = retrieval_variant
+        self.phase_top_m = phase_top_m
+        self.phase_lambda = phase_lambda
+        self.phase_tau = phase_tau
+        self.phase_period = phase_period
         
         self.with_dec = with_dec
         self.return_key = return_key
@@ -39,9 +49,14 @@ class RetrievalTool():
     def prepare_dataset(self, train_data):
         train_data_all = []
         y_data_all = []
+        train_indices = []
+        train_abs_indices = []
+        base_index = getattr(train_data, 'border1', 0)
 
         for i in range(len(train_data)):
             td = train_data[i]
+            train_indices.append(td[0])
+            train_abs_indices.append(td[0] + base_index)
             train_data_all.append(td[1])
             
             if self.with_dec:
@@ -56,6 +71,53 @@ class RetrievalTool():
         self.y_data_all_mg, _ = self.decompose_mg(self.y_data_all)
 
         self.n_train = self.train_data_all.shape[0]
+        self.train_indices = torch.tensor(train_indices).long()
+        self.train_abs_indices = torch.tensor(train_abs_indices).long()
+
+    def phase_scores(self, query_abs_index, candidate_index):
+        if self.phase_period is None or self.phase_period <= 0:
+            raise ValueError('phase_period must be positive for phase-aware retrieval')
+
+        train_abs_indices = self.train_abs_indices.to(candidate_index.device)
+        candidate_abs_index = train_abs_indices[candidate_index]
+
+        query_phase = (query_abs_index + self.seq_len - 1) % self.phase_period
+        candidate_phase = (candidate_abs_index + self.seq_len - 1) % self.phase_period
+
+        phase_dist = (candidate_phase - query_phase.unsqueeze(1)).abs().float()
+        phase_dist = torch.minimum(phase_dist, self.phase_period - phase_dist)
+        return torch.exp(-phase_dist / self.phase_tau)
+
+    def select_candidates(self, sim, query_abs_index):
+        bsz = query_abs_index.shape[0]
+        flat_sim = sim.reshape(self.n_period * bsz, self.n_train)
+        shape_top_k = min(self.topm, self.n_train)
+        shape_score, shape_index = torch.topk(flat_sim, shape_top_k, dim=1)
+
+        if self.retrieval_variant == 'A':
+            selected_index = shape_index
+            selected_score = shape_score
+        else:
+            phase_top_m = min(self.phase_top_m, shape_top_k)
+            query_abs_index = query_abs_index.unsqueeze(0).repeat(self.n_period, 1).reshape(-1)
+            score_phase = self.phase_scores(query_abs_index, shape_index)
+
+            if self.retrieval_variant == 'B':
+                selected_pos = torch.topk(score_phase, phase_top_m, dim=1).indices
+                selected_score = torch.gather(shape_score, 1, selected_pos)
+            elif self.retrieval_variant == 'C':
+                score_final = shape_score + self.phase_lambda * score_phase
+                selected_pos = torch.topk(score_final, phase_top_m, dim=1).indices
+                selected_score = torch.gather(score_final, 1, selected_pos)
+            else:
+                raise ValueError(f'Unknown retrieval_variant: {self.retrieval_variant}')
+
+            selected_index = torch.gather(shape_index, 1, selected_pos)
+
+        ranking_sim = torch.ones_like(flat_sim) * float('-inf')
+        rows = torch.arange(flat_sim.size(0)).unsqueeze(-1).to(flat_sim.device)
+        ranking_sim[rows, selected_index] = selected_score
+        return ranking_sim.reshape(self.n_period, bsz, self.n_train)
 
     def decompose_mg(self, data_all, remove_offset=True):
         data_all = copy.deepcopy(data_all) # T, S, C
@@ -106,8 +168,11 @@ class RetrievalTool():
         
         return sim
         
-    def retrieve(self, x, index, train=True):
+    def retrieve(self, x, index, train=True, phase_index=None):
         index = index.to(x.device)
+        if phase_index is None:
+            phase_index = index
+        phase_index = phase_index.to(x.device).long()
         
         bsz, seq_len, channels = x.shape
         assert seq_len == self.seq_len and channels == self.channels
@@ -136,17 +201,7 @@ class RetrievalTool():
             all_masked = torch.isinf(sim).all(dim=2, keepdim=True)
             sim = torch.where(all_masked, raw_sim, sim)
 
-        sim = sim.reshape(self.n_period * bsz, self.n_train) # G X B, T
-                
-        topm = min(self.topm, self.n_train)
-        topm_index = torch.topk(sim, topm, dim=1).indices
-        ranking_sim = torch.ones_like(sim) * float('-inf')
-        
-        rows = torch.arange(sim.size(0)).unsqueeze(-1).to(sim.device)
-        ranking_sim[rows, topm_index] = sim[rows, topm_index]
-        
-        sim = sim.reshape(self.n_period, bsz, self.n_train) # G, B, T
-        ranking_sim = ranking_sim.reshape(self.n_period, bsz, self.n_train) # G, B, T
+        ranking_sim = self.select_candidates(sim, phase_index) # G, B, T
 
         data_len, seq_len, channels = self.train_data_all.shape
             
@@ -174,7 +229,13 @@ class RetrievalTool():
         retrievals = []
         with torch.no_grad():
             for index, batch_x, batch_y, batch_x_mark, batch_y_mark in tqdm(rt_loader):
-                pred_from_retrieval = self.retrieve(batch_x.float().to(device), index, train=train)
+                phase_index = index + getattr(data, 'border1', 0)
+                pred_from_retrieval = self.retrieve(
+                    batch_x.float().to(device),
+                    index,
+                    train=train,
+                    phase_index=phase_index,
+                )
                 pred_from_retrieval = pred_from_retrieval.cpu()
                 retrievals.append(pred_from_retrieval)
                 

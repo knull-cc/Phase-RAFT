@@ -15,9 +15,9 @@ if __name__ == '__main__':
     parser.add_argument('--is_training', type=int, default=1, help='status')
     parser.add_argument('--model_id', type=str, default='temp', help='model id')
     parser.add_argument('--model', type=str, default='RAFT',
-                        help='model name, options: [RAFT, PhaseRAFT]')
+                        help='model name, options: [RAFT]')
     parser.add_argument('-Phase', '--Phase', '--phase', action='store_true', dest='phase',
-                        help='activate Phase-RAFT; RAFT is used by default')
+                        help='activate phase-aware RAFT retrieval; defaults to retrieval_variant C')
 
     # data loader
     parser.add_argument('--data', type=str, required=True, default='ETTh1', help='dataset type')
@@ -86,7 +86,28 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--topm', type=int, default=20,
-        help='Number of Retrievals'
+        help='shape retrieval top-k candidate count'
+    )
+    parser.add_argument(
+        '--retrieval_variant', type=str, default='A', choices=['A', 'B', 'C'],
+        help='A: RAFT top-k; B: shape top-k then phase hard top-m; '
+             'C: shape top-k then shape+phase soft re-rank top-m'
+    )
+    parser.add_argument(
+        '--phase_top_m', '--top_m', type=int, default=5, dest='phase_top_m',
+        help='final top-m candidates kept after phase-aware selection'
+    )
+    parser.add_argument(
+        '--phase_lambda', type=float, default=0.1,
+        help='lambda for C: score_final = score_shape + lambda * score_phase'
+    )
+    parser.add_argument(
+        '--phase_tau', type=float, default=2.0,
+        help='temperature for phase score exp(-d_phase / tau)'
+    )
+    parser.add_argument(
+        '--phase_period', type=int, default=None,
+        help='phase period P; defaults to --period_len'
     )
     parser.add_argument(
         '--temperature', type=float, default=0.1,
@@ -94,19 +115,11 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--period_len', type=int, default=24,
-        help='phase tokenizer period length for Phase-RAFT'
+        help='default phase period; used when --phase_period is unset'
     )
     parser.add_argument(
         '--cycle', type=int, default=None,
         help='compatibility alias for --period_len'
-    )
-    parser.add_argument(
-        '--phase_hidden', type=int, default=128,
-        help='hidden width of the shallow phase predictor'
-    )
-    parser.add_argument(
-        '--no-retrieval', '--no_retrieval', action='store_true', dest='no_retrieval',
-        help='disable the retrieval branch for Phase-RAFT ablation'
     )
     parser.add_argument(
         '--no-phase-routing', '--no_phase_routing', action='store_false', dest='phase_routing',
@@ -188,11 +201,31 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     if args.phase:
-        args.model = 'PhaseRAFT'
+        args.model = 'RAFT'
+        if args.retrieval_variant == 'A':
+            args.retrieval_variant = 'C'
     if args.cycle is not None:
         args.period_len = args.cycle
+    if args.phase_period is None:
+        args.phase_period = args.period_len
     if args.random_seed is not None:
         args.seed = args.random_seed
+    if args.topm <= 0:
+        raise ValueError('--topm must be positive')
+    if args.phase_top_m <= 0:
+        raise ValueError('--phase_top_m must be positive')
+    if args.retrieval_variant != 'A' and args.phase_tau <= 0:
+        raise ValueError('--phase_tau must be positive for phase-aware retrieval')
+    if args.retrieval_variant != 'A' and args.phase_period <= 0:
+        raise ValueError('--phase_period must be positive for phase-aware retrieval')
+    if args.retrieval_variant != 'A':
+        args.des = '{}_ret{}_m{}_lam{}_tau{}'.format(
+            args.des,
+            args.retrieval_variant,
+            args.phase_top_m,
+            args.phase_lambda,
+            args.phase_tau,
+        )
 
     fix_seed = args.seed
     random.seed(fix_seed)

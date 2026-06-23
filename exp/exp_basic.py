@@ -1,6 +1,6 @@
 import os
 import torch
-from models import RAFT, PhaseRAFT
+from models import RAFT
 
 
 class Exp_Basic(object):
@@ -8,7 +8,6 @@ class Exp_Basic(object):
         self.args = args
         self.model_dict = {
             'RAFT': RAFT,
-            'PhaseRAFT': PhaseRAFT,
         }
 
         self.device = self._acquire_device()

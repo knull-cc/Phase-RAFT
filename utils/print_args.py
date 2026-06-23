@@ -40,6 +40,12 @@ def print_args(args):
     print(f'  {"Output Attention:":<20}{args.output_attention:<20}')
     print()
 
+    print("\033[1m" + "Retrieval Parameters" + "\033[0m")
+    print(f'  {"Variant:":<20}{args.retrieval_variant:<20}{"Shape Top-k:":<20}{args.topm:<20}')
+    print(f'  {"Phase Top-m:":<20}{args.phase_top_m:<20}{"Phase Period:":<20}{args.phase_period:<20}')
+    print(f'  {"Phase Lambda:":<20}{args.phase_lambda:<20}{"Phase Tau:":<20}{args.phase_tau:<20}')
+    print()
+
     print("\033[1m" + "Run Parameters" + "\033[0m")
     print(f'  {"Num Workers:":<20}{args.num_workers:<20}{"Itr:":<20}{args.itr:<20}')
     print(f'  {"Train Epochs:":<20}{args.train_epochs:<20}{"Batch Size:":<20}{args.batch_size:<20}')

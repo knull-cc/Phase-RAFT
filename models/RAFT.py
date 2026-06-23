@@ -41,6 +41,11 @@ class Model(nn.Module):
             n_period=self.n_period,
             temperature=configs.temperature,
             topm=self.topm,
+            retrieval_variant=configs.retrieval_variant,
+            phase_top_m=configs.phase_top_m,
+            phase_lambda=configs.phase_lambda,
+            phase_tau=configs.phase_tau,
+            phase_period=configs.phase_period,
         )
         
         self.period_num = self.rt.period_num[-1 * self.n_period:]

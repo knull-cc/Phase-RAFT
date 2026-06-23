@@ -17,9 +17,13 @@ pip install -r requirements.txt
 ```
 python3 run.py --data [DATASET]
 ```
-3. Run Phase-RAFT by adding `-Phase`.
+3. Run phase-aware RAFT retrieval by adding `-Phase`.
 ```
 python3 run.py --data [DATASET] -Phase
+```
+This is shorthand for retrieval variant C:
+```
+python3 run.py --data [DATASET] --retrieval_variant C
 ```
 4. Run the provided experiment scripts.
 ```
@@ -27,4 +31,12 @@ sh run_main.sh
 sh run_main.sh -Phase
 ```
 
-`--no-retrieval` can be combined with `-Phase` for the Phase-RAFT no-retrieval ablation.
+Retrieval variants:
+* `--retrieval_variant A`: RAFT original shape top-k.
+* `--retrieval_variant B`: shape top-k -> phase hard top-m.
+* `--retrieval_variant C`: shape top-k -> shape+phase soft re-rank top-m.
+
+Phase-aware retrieval parameters:
+```
+--topm 20 --phase_top_m 5 --phase_lambda 0.1 --phase_tau 2 --phase_period 24
+```
