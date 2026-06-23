@@ -1,3 +1,5 @@
+--retrieval_variant C --topm 20 --phase_top_m 5 --phase_lambda 0.1 --phase_tau 2
+
 long_term_forecast_ETTh1_96_96_RAFT_ETTh1_ftM_sl96_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
 mse:0.3821253776550293, mae:0.4081939160823822, dtw:-999
 

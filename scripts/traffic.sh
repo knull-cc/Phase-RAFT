@@ -7,7 +7,7 @@ model_id_name=traffic
 data_name=custom
 
 
-seq_len=96
+seq_len=336
 for pred_len in 96 192 336 720
 do
 for random_seed in 2024
