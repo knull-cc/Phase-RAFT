@@ -7,7 +7,7 @@ import random
 import numpy as np
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='TimesNet')
+    parser = argparse.ArgumentParser(description='Phase-aligned IdeaBlock Retrieval')
 
     # basic config
     parser.add_argument('--task_name', type=str, default='long_term_forecast',
@@ -17,8 +17,7 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='RAFT',
                         help='model name, options: [RAFT]')
     parser.add_argument('-Phase', '--Phase', '--phase', action='store_true', dest='phase',
-                        help='activate phase-aware RAFT retrieval and phase-domain fusion; '
-                             'defaults to retrieval_variant C')
+                        help='compatibility flag; RAFT now always uses Phase-aligned IdeaBlock Retrieval')
 
     # data loader
     parser.add_argument('--data', type=str, required=True, default='ETTh1', help='dataset type')
@@ -82,122 +81,26 @@ if __name__ == '__main__':
         help='whether to output attention in ecoder'
     )
     parser.add_argument(
-        '--n_period', type=int, default=3,
-        help='Number of Periods'
-    )
-    parser.add_argument(
         '--topm', type=int, default=20,
-        help='shape retrieval top-k candidate count'
-    )
-    parser.add_argument(
-        '--retrieval_variant', type=str, default='A', choices=['A', 'B', 'C'],
-        help='A: RAFT top-k; B: shape top-k then phase hard top-m; '
-             'C: shape top-k then shape+phase soft re-rank top-m'
-    )
-    parser.add_argument(
-        '--phase_top_m', '--top_m', type=int, default=5, dest='phase_top_m',
-        help='final top-m candidates kept after phase-aware selection'
-    )
-    parser.add_argument(
-        '--phase_lambda', type=float, default=0.1,
-        help='lambda for C: score_final = score_shape + lambda * score_phase'
-    )
-    parser.add_argument(
-        '--phase_tau', type=float, default=2.0,
-        help='temperature for phase score exp(-d_phase / tau)'
-    )
-    parser.add_argument(
-        '--phase_period', type=int, default=None,
-        help='phase period P; defaults to --period_len'
+        help='top-k Phase-aligned IdeaBlock neighbors'
     )
     parser.add_argument(
         '--temperature', type=float, default=0.1,
-        help='retrieval softmax temperature'
+        help='softmax temperature for IdeaBlock value aggregation'
     )
     parser.add_argument(
         '--period_len', type=int, default=24,
-        help='default phase period; used when --phase_period is unset'
+        help='period length P used for phase alignment'
     )
     parser.add_argument(
         '--cycle', type=int, default=None,
         help='compatibility alias for --period_len'
     )
-    parser.add_argument('--phase_fusion', '--phase-fusion', action='store_true', default=False,
-                        help='enable phase-domain fusion after RAFT retrieval')
-    parser.add_argument('--phase_fusion_mode', choices=['residual', 'backbone'], default='residual',
-                        help='residual: add a gated phase residual to RAFT; '
-                             'backbone: use the phase-domain predictor as the main output head')
-    parser.add_argument('--phase_fusion_scale', type=float, default=0.1,
-                        help='max scale of phase-domain residual fusion')
-    parser.add_argument('--no-phase-fusion', '--no_phase_fusion',
-                        '--no-phase-routing', '--no_phase_routing',
-                        action='store_true', dest='disable_phase_fusion', default=False,
-                        help='disable phase-domain fusion even when -Phase is used')
-    parser.add_argument('-phase_block', '--phase_block', '--phase-block',
-                        action='store_true', dest='phase_block', default=False,
-                        help='enable phase-conditioned residual corrector at test time')
-    parser.add_argument('--phase_block_as_model', '--phase-block-as-model',
-                        action='store_true', dest='phase_block_as_model', default=False,
-                        help='use PhaseBlock direct future retrieval as the test-time forecaster')
-    parser.add_argument('--phase_block_periods', type=str, default=None,
-                        help='comma-separated PRC periods; if unset, periods are estimated by FFT')
-    parser.add_argument('--phase_block_max_periods', type=int, default=2,
-                        help='maximum number of FFT-estimated periods used by PRC')
-    parser.add_argument('--phase_block_min_strength', type=float, default=0.05,
-                        help='minimum FFT power ratio required to keep an estimated PRC period')
-    parser.add_argument('--phase_block_patch', type=int, default=3,
-                        help='local micro-patch width around each phase point')
-    parser.add_argument('--phase_block_cycles', type=int, default=4,
-                        help='number of previous phase-aligned cycles in each PRC key')
-    parser.add_argument('--phase_block_topk', type=int, default=5,
-                        help='number of residual neighbors retrieved by PRC')
-    parser.add_argument('--phase_block_temperature', type=float, default=0.1,
-                        help='softmax temperature for PRC residual aggregation')
-    parser.add_argument('--phase_block_alpha', type=float, default=0.2,
-                        help='maximum PRC residual injection scale')
-    parser.add_argument('--phase_block_sim_threshold', type=float, default=0.3,
-                        help='nearest-neighbor similarity threshold below which PRC is gated off')
-    parser.add_argument('--phase_block_residual_var_scale', type=float, default=1.0,
-                        help='penalty scale for disagreement among retrieved residuals')
-    parser.add_argument('--phase_block_stride', type=int, default=1,
-                        help='stride for storing residuals into the PRC datastore')
-    parser.add_argument('--phase_block_bank_mode', choices=['full', 'single'], default='full',
-                        help='full: store one PhaseBlock residual per forecast step; '
-                             'single: legacy one-key-per-window residual bank')
-    parser.add_argument('--phase_block_value_mode', choices=['residual', 'future'], default='residual',
-                        help='residual: store Y - Y_base and correct RAFT; '
-                             'future: store Y - x_last and directly forecast with PhaseBlock')
-    parser.add_argument('--phase_block_query_chunk', type=int, default=256,
-                        help='query chunk size for full PhaseBlock retrieval')
-    parser.add_argument('--phase_block_memory_source', choices=['val', 'train_roll_val'], default='val',
-                        help='PRC datastore source: val is strictest; train_roll_val also uses the later train windows')
-    parser.add_argument('--phase_block_train_init_ratio', type=float, default=0.7,
-                        help='when using train_roll_val, train windows after this ratio enter the rolling memory')
-    parser.add_argument('--use_revin', action='store_true', default=False,
-                        help='use RevIN (mean/std instance norm) instead of subtract-last offset')
-    parser.add_argument('--diversity_aware', action='store_true', default=False,
-                        help='SARAF-style diversity-aware retrieval: time-NMS selection + '
-                             'reliability features (top-k sim strength & neighbor disagreement)')
-    parser.add_argument('--retrieval_pool', type=int, default=100,
-                        help='candidate pool size (top-N) before diversity selection')
-    parser.add_argument('--nms_gap', type=int, default=None,
-                        help='min index gap between selected neighbors in time-NMS '
-                             '(defaults to pred_len)')
-    parser.add_argument('--rel_topk', type=int, default=5,
-                        help='number of top neighbors used to estimate similarity strength')
-    parser.add_argument('--period_list', type=str, default=None,
-                        help='comma-separated phase periods for multi-period routing, '
-                             'e.g. "24,168". Defaults to --period_len if unset.')
-    parser.add_argument('--latent_dim', type=int, default=64,
-                        help='latent dim of cross-phase routing branch')
-    parser.add_argument('--phase_layers', type=int, default=1,
-                        help='number of cross-phase routing layers')
-    parser.add_argument('--phase_num_routers', type=int, default=8,
-                        help='number of routers in cross-phase routing')
-    parser.add_argument('--phase_heads', type=int, default=4,
-                        help='attention heads in cross-phase routing')
-    parser.add_argument('--phase_attn_dropout', type=float, default=0.1,
-                        help='dropout in cross-phase routing branch')
+    parser.add_argument('--idea_block_radius', '--phase_radius', type=int, default=1,
+                        dest='idea_block_radius',
+                        help='phase neighborhood radius r around center phase p')
+    parser.add_argument('--idea_block_cycles', type=int, default=4,
+                        help='number of past cycles aligned inside each IdeaBlock key')
 
     # optimization
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
@@ -248,71 +151,29 @@ if __name__ == '__main__':
     parser.add_argument('--extra_tag', type=str, default="", help="Anything extra")
 
     args = parser.parse_args()
-    if args.phase_block_as_model:
-        args.phase_block = True
-        args.phase_block_value_mode = 'future'
     if args.phase:
         args.model = 'RAFT'
-        if args.retrieval_variant == 'A':
-            args.retrieval_variant = 'C'
-        if not args.disable_phase_fusion:
-            args.phase_fusion = True
-    if args.disable_phase_fusion:
-        args.phase_fusion = False
-    if args.phase_fusion_mode == 'backbone' and not args.disable_phase_fusion:
-        args.phase_fusion = True
     if args.cycle is not None:
         args.period_len = args.cycle
-    if args.phase_period is None:
-        args.phase_period = args.period_len
     if args.random_seed is not None:
         args.seed = args.random_seed
+    if args.period_len <= 0:
+        raise ValueError('--period_len must be positive')
+    if args.idea_block_radius < 0:
+        raise ValueError('--idea_block_radius must be non-negative')
+    if args.idea_block_cycles <= 0:
+        raise ValueError('--idea_block_cycles must be positive')
     if args.topm <= 0:
         raise ValueError('--topm must be positive')
-    if args.phase_top_m <= 0:
-        raise ValueError('--phase_top_m must be positive')
-    if args.phase_fusion_scale < 0:
-        raise ValueError('--phase_fusion_scale must be non-negative')
-    if args.phase_block_max_periods <= 0:
-        raise ValueError('--phase_block_max_periods must be positive')
-    if args.phase_block_patch <= 0:
-        raise ValueError('--phase_block_patch must be positive')
-    if args.phase_block_cycles <= 0:
-        raise ValueError('--phase_block_cycles must be positive')
-    if args.phase_block_topk <= 0:
-        raise ValueError('--phase_block_topk must be positive')
-    if args.phase_block_temperature <= 0:
-        raise ValueError('--phase_block_temperature must be positive')
-    if args.phase_block_alpha < 0:
-        raise ValueError('--phase_block_alpha must be non-negative')
-    if args.phase_block_stride <= 0:
-        raise ValueError('--phase_block_stride must be positive')
-    if args.phase_block_query_chunk <= 0:
-        raise ValueError('--phase_block_query_chunk must be positive')
-    if not 0 <= args.phase_block_train_init_ratio < 1:
-        raise ValueError('--phase_block_train_init_ratio must be in [0, 1)')
-    if args.retrieval_variant != 'A' and args.phase_tau <= 0:
-        raise ValueError('--phase_tau must be positive for phase-aware retrieval')
-    if args.retrieval_variant != 'A' and args.phase_period <= 0:
-        raise ValueError('--phase_period must be positive for phase-aware retrieval')
-    if args.retrieval_variant != 'A':
-        args.des = '{}_ret{}_m{}_lam{}_tau{}'.format(
-            args.des,
-            args.retrieval_variant,
-            args.phase_top_m,
-            args.phase_lambda,
-            args.phase_tau,
-        )
-    if args.phase_fusion:
-        args.des = '{}_pf{}_{}'.format(args.des, args.period_list or args.period_len, args.phase_fusion_mode)
-    if args.phase_block:
-        args.des = '{}_pb{}_{}_k{}_a{}'.format(
-            args.des,
-            args.phase_block_periods or 'fft',
-            args.phase_block_value_mode,
-            args.phase_block_topk,
-            args.phase_block_alpha,
-        )
+    if args.temperature <= 0:
+        raise ValueError('--temperature must be positive')
+    args.des = '{}_pibr_P{}_r{}_cyc{}_k{}'.format(
+        args.des,
+        args.period_len,
+        args.idea_block_radius,
+        args.idea_block_cycles,
+        args.topm,
+    )
 
     fix_seed = args.seed
     random.seed(fix_seed)

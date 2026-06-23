@@ -1,6 +1,6 @@
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
-from utils.tools import EarlyStopping, adjust_learning_rate, visual
+from utils.tools import adjust_learning_rate, visual
 from utils.metrics import metric
 import torch
 import torch.nn as nn
@@ -9,9 +9,7 @@ import os
 import time
 import warnings
 import numpy as np
-import copy
-from utils.dtw_metric import dtw,accelerated_dtw
-from utils.augmentation import run_augmentation,run_augmentation_single
+from utils.dtw_metric import accelerated_dtw
 
 warnings.filterwarnings('ignore')
 
@@ -23,9 +21,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
     @staticmethod
     def _uses_retrieval_model(model_name):
         return model_name in ['RAFT']
-
-    def _core_model(self):
-        return self.model.module if isinstance(self.model, nn.DataParallel) else self.model
 
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()
@@ -52,64 +47,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
     def _select_criterion(self):
         criterion = nn.MSELoss()
         return criterion
-
-    def _build_phase_block_memory(self):
-        if not getattr(self.args, 'phase_block', False) or not self._uses_retrieval_model(self.args.model):
-            return
-
-        core_model = self._core_model()
-        if not hasattr(core_model, 'prepare_phase_block'):
-            return
-
-        value_mode = getattr(self.args, 'phase_block_value_mode', 'residual')
-        print(f'Building PhaseBlock {value_mode} memory')
-        train_data, train_loader = self._get_data(flag='train')
-        vali_data, vali_loader = self._get_data(flag='val')
-
-        period_data = getattr(train_data, 'data_x', None)
-        if period_data is None:
-            period_data = getattr(vali_data, 'data_x', None)
-        core_model.prepare_phase_block(period_data)
-
-        was_training = self.model.training
-        self.model.eval()
-
-        def feed_memory(data_set, loader, mode, min_index=None):
-            with torch.no_grad():
-                for index, batch_x, batch_y, batch_x_mark, batch_y_mark in loader:
-                    if min_index is not None:
-                        keep = index >= min_index
-                        if keep.sum().item() == 0:
-                            continue
-                        index = index[keep]
-                        batch_x = batch_x[keep]
-                        batch_y = batch_y[keep]
-
-                    index_abs = index + getattr(data_set, 'border1', 0)
-                    batch_x = batch_x.float().to(self.device)
-                    batch_y = batch_y.float().to(self.device)
-                    outputs = self.model(
-                        batch_x,
-                        index,
-                        mode=mode,
-                        apply_phase_block=False,
-                    )
-                    outputs = outputs[:, -self.args.pred_len:, :]
-                    true = batch_y[:, -self.args.pred_len:, :]
-                    if value_mode == 'future':
-                        values = true - batch_x[:, -1:, :]
-                    else:
-                        values = true - outputs
-                    core_model.add_phase_block_memory(batch_x, values, index_abs=index_abs)
-
-        if self.args.phase_block_memory_source == 'train_roll_val':
-            roll_start = int(len(train_data) * self.args.phase_block_train_init_ratio)
-            feed_memory(train_data, train_loader, mode='train', min_index=roll_start)
-        feed_memory(vali_data, vali_loader, mode='valid')
-        core_model.finalize_phase_block_memory()
-
-        if was_training:
-            self.model.train()
 
     def vali(self, vali_data, vali_loader, criterion, mode='valid'):
         total_loss = []
@@ -170,7 +107,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             scaler = torch.cuda.amp.GradScaler()
 
         best_valid_loss = float('inf')
-        best_model = None
+        best_model_state = None
             
         for epoch in range(self.args.train_epochs):
             iter_count = 0
@@ -234,23 +171,30 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             # We do not use early stopping
             
             if vali_loss < best_valid_loss:
-                best_model = copy.deepcopy(self.model)
+                best_model_state = {
+                    name: value.detach().cpu().clone()
+                    for name, value in self.model.state_dict().items()
+                }
                 best_valid_loss = vali_loss
                 
-        best_model_path = path + '/' + 'checkpoint.pth'
-        torch.save(best_model.state_dict(), best_model_path)
-#         self.model.load_state_dict(torch.load(best_model_path))
+        if best_model_state is None:
+            best_model_state = {
+                name: value.detach().cpu().clone()
+                for name, value in self.model.state_dict().items()
+            }
 
-#         return self.model
-        return best_model
+        best_model_path = path + '/' + 'checkpoint.pth'
+        torch.save(best_model_state, best_model_path)
+        self.model.load_state_dict(best_model_state)
+
+        return self.model
 
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
         if test:
             print('loading model')
-            self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
-
-        self._build_phase_block_memory()
+            checkpoint_path = os.path.join(self.args.checkpoints, setting, 'checkpoint.pth')
+            self.model.load_state_dict(torch.load(checkpoint_path, map_location=self.device))
 
         preds = []
         trues = []

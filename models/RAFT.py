@@ -1,260 +1,96 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from layers.CrossPhaseRouting import MultiPeriodPhaseBranch
-from layers.PhaseBlock import PhaseBlockResidualMemory
-from layers.Retrieval import RetrievalTool
+from layers.Retrieval import PhaseAlignedIdeaBlockRetrieval
+
 
 class Model(nn.Module):
-    """
-    Paper link: https://arxiv.org/pdf/2205.13504.pdf
-    """
+    """Phase-aligned IdeaBlock Retrieval forecaster."""
 
     def __init__(self, configs, individual=False):
-        """
-        individual: Bool, whether shared model among different variates.
-        """
         super(Model, self).__init__()
         if configs.use_gpu and torch.cuda.is_available():
             self.device = torch.device(f'cuda:{configs.gpu}')
         else:
             self.device = torch.device('cpu')
+
         self.task_name = configs.task_name
         self.seq_len = configs.seq_len
-        if self.task_name == 'classification' or self.task_name == 'anomaly_detection' or self.task_name == 'imputation':
-            self.pred_len = configs.seq_len
-        else:
-            self.pred_len = configs.pred_len
-        # Series decomposition block from Autoformer
-#         self.decompsition = series_decomp(configs.moving_avg)
-#         self.individual = individual
+        self.pred_len = configs.seq_len if self.task_name in [
+            'classification',
+            'anomaly_detection',
+            'imputation',
+        ] else configs.pred_len
         self.channels = configs.enc_in
 
         self.linear_x = nn.Linear(self.seq_len, self.pred_len)
-        
-        self.n_period = configs.n_period
-        self.topm = configs.topm
-        
-        self.rt = RetrievalTool(
+        self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
+
+        self.retriever = PhaseAlignedIdeaBlockRetrieval(
             seq_len=self.seq_len,
             pred_len=self.pred_len,
             channels=self.channels,
-            n_period=self.n_period,
+            period_len=configs.period_len,
+            phase_radius=configs.idea_block_radius,
+            num_cycles=configs.idea_block_cycles,
+            topk=configs.topm,
             temperature=configs.temperature,
-            topm=self.topm,
-            retrieval_variant=configs.retrieval_variant,
-            phase_top_m=configs.phase_top_m,
-            phase_lambda=configs.phase_lambda,
-            phase_tau=configs.phase_tau,
-            phase_period=configs.phase_period,
         )
-        
-        self.period_num = self.rt.period_num[-1 * self.n_period:]
-        
-        module_list = [
-            nn.Linear(self.pred_len // g, self.pred_len)
-            for g in self.period_num
-        ]
-        self.retrieval_pred = nn.ModuleList(module_list)
-        self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
-        self.phase_fusion = configs.phase_fusion
-        self.phase_fusion_mode = getattr(configs, 'phase_fusion_mode', 'residual')
-        self.phase_fusion_scale = configs.phase_fusion_scale
-        self.phase_branch = None
-        if self.phase_fusion:
-            self.phase_periods = self._parse_phase_periods(configs)
-            self.phase_branch = MultiPeriodPhaseBranch(
-                periods=self.phase_periods,
-                seq_len=self.seq_len,
-                pred_len=self.pred_len,
-                latent_dim=configs.latent_dim,
-                n_layers=configs.phase_layers,
-                num_routers=configs.phase_num_routers,
-                num_heads=configs.phase_heads,
-                dropout=configs.phase_attn_dropout,
-                zero_init=self.phase_fusion_mode == 'residual',
-            )
-            if self.phase_fusion_mode == 'residual':
-                self.phase_gate = nn.Parameter(torch.tensor(-4.0))
+        self.data_borders = {}
 
-        self.phase_block_enabled = getattr(configs, 'phase_block', False)
-        self.phase_block = None
-        if self.phase_block_enabled:
-            self.phase_block = PhaseBlockResidualMemory(
-                seq_len=self.seq_len,
-                pred_len=self.pred_len,
-                channels=self.channels,
-                periods=configs.phase_block_periods,
-                max_periods=configs.phase_block_max_periods,
-                min_period_strength=configs.phase_block_min_strength,
-                patch_width=configs.phase_block_patch,
-                num_cycles=configs.phase_block_cycles,
-                topk=configs.phase_block_topk,
-                temperature=configs.phase_block_temperature,
-                alpha=configs.phase_block_alpha,
-                sim_threshold=configs.phase_block_sim_threshold,
-                residual_var_scale=configs.phase_block_residual_var_scale,
-                stride=configs.phase_block_stride,
-                bank_mode=configs.phase_block_bank_mode,
-                value_mode=configs.phase_block_value_mode,
-                query_chunk=configs.phase_block_query_chunk,
-            )
-
-#         if self.task_name == 'classification':
-#             self.projection = nn.Linear(
-#                 configs.enc_in * configs.seq_len, configs.num_class)
-
-    @staticmethod
-    def _parse_phase_periods(configs):
-        if configs.period_list:
-            periods = [int(item.strip()) for item in configs.period_list.split(',') if item.strip()]
-        else:
-            periods = [configs.period_len]
-        periods = [period for period in periods if period > 0]
-        if not periods:
-            raise ValueError('phase fusion requires at least one positive period')
-        return periods
-
-    def prepare_dataset(self, train_data, valid_data, test_data):
-        self.rt.prepare_dataset(train_data)
-        self.phase_block_borders = {
-            'train': getattr(train_data, 'border1', 0),
-            'valid': getattr(valid_data, 'border1', 0),
-            'test': getattr(test_data, 'border1', 0),
+    def prepare_dataset(self, train_data, valid_data=None, test_data=None):
+        self.retriever.prepare_dataset(train_data)
+        self.data_borders = {
+            'train': int(getattr(train_data, 'border1', 0)),
+            'valid': int(getattr(valid_data, 'border1', 0)) if valid_data is not None else 0,
+            'test': int(getattr(test_data, 'border1', 0)) if test_data is not None else 0,
         }
-        
-        self.retrieval_dict = {}
-        
-        print('Doing Train Retrieval')
-        train_rt = self.rt.retrieve_all(train_data, train=True, device=self.device)
 
-        print('Doing Valid Retrieval')
-        valid_rt = self.rt.retrieve_all(valid_data, train=False, device=self.device)
-
-        print('Doing Test Retrieval')
-        test_rt = self.rt.retrieve_all(test_data, train=False, device=self.device)
-
-        del self.rt
-        torch.cuda.empty_cache()
-            
-        self.retrieval_dict['train'] = train_rt.detach()
-        self.retrieval_dict['valid'] = valid_rt.detach()
-        self.retrieval_dict['test'] = test_rt.detach()
-
-    def prepare_phase_block(self, period_data):
-        if self.phase_block is None:
-            return
-        self.phase_block.estimate_periods(period_data)
-        self.phase_block.reset_memory()
-
-    def add_phase_block_memory(self, x, residual, index_abs=None):
-        if self.phase_block is None:
-            return
-        self.phase_block.add_batch(x, residual, index_abs=index_abs)
-
-    def finalize_phase_block_memory(self):
-        if self.phase_block is None:
-            return
-        self.phase_block.finalize_memory()
-
-    def encoder(self, x, index, mode, apply_phase_block=True):
-        index_cpu = index.detach().cpu().long()
-        
+    def encoder(self, x, index, mode):
         bsz, seq_len, channels = x.shape
-        assert seq_len == self.seq_len and channels == self.channels
-        
-        if (
-            apply_phase_block
-            and mode == 'test'
-            and self.phase_block is not None
-            and self.phase_block.value_mode == 'future'
-        ):
-            border = self.phase_block_borders.get(mode, 0)
-            index_abs = index.to(x.device).long() + int(border)
-            return self.phase_block.forecast_direct(x, index_abs=index_abs)
+        if seq_len != self.seq_len or channels != self.channels:
+            raise ValueError('RAFT input shape does not match configured seq_len/channels')
+
+        border = self.data_borders.get(mode, 0)
+        index_abs = index.to(x.device).long() + int(border)
 
         x_offset = x[:, -1:, :].detach()
         x_norm = x - x_offset
+        backbone = self.linear_x(x_norm.permute(0, 2, 1)).permute(0, 2, 1)
+        backbone = backbone + x_offset
 
-        x_pred_from_x = self.linear_x(x_norm.permute(0, 2, 1)).permute(0, 2, 1) # B, P, C
-        
-        pred_from_retrieval = self.retrieval_dict[mode][:, index_cpu] # G, B, P, C
-        pred_from_retrieval = pred_from_retrieval.to(self.device)
-        
-        retrieval_pred_list = []
-        
-        # Compress repeating dimensions
-        for i, pr in enumerate(pred_from_retrieval):
-            assert((bsz, self.pred_len, channels) == pr.shape)
-            g = self.period_num[i]
-            pr = pr.reshape(bsz, self.pred_len // g, g, channels)
-            pr = pr[:, :, 0, :]
-            
-            pr = self.retrieval_pred[i](pr.permute(0, 2, 1)).permute(0, 2, 1)
-            pr = pr.reshape(bsz, self.pred_len, self.channels)
-            
-            retrieval_pred_list.append(pr)
+        retrieved_future = self.retriever.retrieve(
+            x,
+            index_abs=index_abs,
+            train=mode == 'train',
+        )
 
-        retrieval_pred_list = torch.stack(retrieval_pred_list, dim=1)
-        retrieved_future = retrieval_pred_list.sum(dim=1)
-        
-        pred = torch.cat([x_pred_from_x, retrieved_future], dim=1)
-        pred = self.linear_pred(pred.permute(0, 2, 1)).permute(0, 2, 1).reshape(bsz, self.pred_len, self.channels)
-        if self.phase_branch is not None:
-            phase_pred = self.phase_branch(x_norm, retrieved_future)
-            if self.phase_fusion_mode == 'backbone':
-                pred = phase_pred
-            else:
-                phase_scale = self.phase_fusion_scale * torch.sigmoid(self.phase_gate)
-                pred = pred + phase_scale * phase_pred
-        
-        pred = pred + x_offset
+        pred = torch.cat([backbone, retrieved_future], dim=1)
+        pred = self.linear_pred(pred.permute(0, 2, 1)).permute(0, 2, 1)
+        return pred.reshape(bsz, self.pred_len, self.channels)
 
-        if (
-            apply_phase_block
-            and mode == 'test'
-            and self.phase_block is not None
-        ):
-            border = self.phase_block_borders.get(mode, 0)
-            index_abs = index.to(x.device).long() + int(border)
-            pred = self.phase_block.correct(x, pred, index_abs=index_abs)
-        
-        return pred
-
-    def forecast(self, x_enc, index, mode, apply_phase_block=True):
-        # Encoder
-        return self.encoder(x_enc, index, mode, apply_phase_block=apply_phase_block)
+    def forecast(self, x_enc, index, mode):
+        return self.encoder(x_enc, index, mode)
 
     def imputation(self, x_enc, index, mode):
-        # Encoder
         return self.encoder(x_enc, index, mode)
 
     def anomaly_detection(self, x_enc, index, mode):
-        # Encoder
         return self.encoder(x_enc, index, mode)
 
     def classification(self, x_enc, index, mode):
-        # Encoder
         enc_out = self.encoder(x_enc, index, mode)
-        # Output
-        # (batch_size, seq_length * d_model)
         output = enc_out.reshape(enc_out.shape[0], -1)
-        # (batch_size, num_classes)
-        output = self.projection(output)
-        return output
+        return self.projection(output)
 
-    def forward(self, x_enc, index, mode='train', apply_phase_block=True):
+    def forward(self, x_enc, index, mode='train'):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            dec_out = self.forecast(x_enc, index, mode, apply_phase_block=apply_phase_block)
-            return dec_out[:, -self.pred_len:, :]  # [B, L, D]
+            dec_out = self.forecast(x_enc, index, mode)
+            return dec_out[:, -self.pred_len:, :]
         if self.task_name == 'imputation':
-            dec_out = self.imputation(x_enc, index, mode)
-            return dec_out  # [B, L, D]
+            return self.imputation(x_enc, index, mode)
         if self.task_name == 'anomaly_detection':
-            dec_out = self.anomaly_detection(x_enc, index, mode)
-            return dec_out  # [B, L, D]
+            return self.anomaly_detection(x_enc, index, mode)
         if self.task_name == 'classification':
-            dec_out = self.classification(x_enc, index, mode)
-            return dec_out  # [B, N]
+            return self.classification(x_enc, index, mode)
         return None
