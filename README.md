@@ -2,8 +2,8 @@
 
 This repository keeps a single forecasting idea:
 
-**Phase-aligned IdeaBlock Retrieval** replaces RAFT's continuous patch-level
-Key-Value retrieval with phase-aligned block-level Key-Value retrieval.
+**Phase-aligned IdeaBlock Retrieval** uses phase-aligned block-level Key-Value
+retrieval for long-term forecasting.
 
 For a period length `P`, each query uses the last observed phase as the center
 phase `p` and a phase neighborhood radius `r`. The key is built by collecting
@@ -15,9 +15,13 @@ Key   = Phase-aligned IdeaBlock(p, r)
 Value = the true future after the input window
 ```
 
+In code, the memory stores the offset-normalized future trend
+`future - last_observed` and adds the current sample's `last_observed` back
+after retrieval. This keeps Key and Value in the same local coordinate system.
+
 At prediction time, the current input is converted into the same IdeaBlock
 query, the model retrieves similar historical keys, aggregates their future
-values, and fuses the retrieved future with the backbone prediction.
+trends, and fuses the retrieved trend with the lookback prediction head.
 
 ## Components
 
@@ -52,7 +56,7 @@ python3 run.py \
   --root_path ./dataset/ETT-small \
   --data_path ETTh1.csv \
   --model_id ETTh1_336_96 \
-  --model RAFT \
+  --model PIBR \
   --features M \
   --seq_len 336 \
   --pred_len 96 \
@@ -73,5 +77,5 @@ Core retrieval parameters:
 --temperature T         # softmax temperature for retrieved future aggregation
 ```
 
-`-Phase` is accepted as a compatibility flag, but the RAFT model now always
-uses Phase-aligned IdeaBlock Retrieval.
+`-Phase` is accepted as a compatibility flag, but `PIBR` always uses
+Phase-aligned IdeaBlock Retrieval.

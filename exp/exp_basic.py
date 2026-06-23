@@ -1,13 +1,13 @@
 import os
 import torch
-from models import RAFT
+from models import PIBR
 
 
 class Exp_Basic(object):
     def __init__(self, args):
         self.args = args
         self.model_dict = {
-            'RAFT': RAFT,
+            'PIBR': PIBR,
         }
 
         self.device = self._acquire_device()

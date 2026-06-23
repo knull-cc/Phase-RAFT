@@ -49,25 +49,25 @@ class Model(nn.Module):
     def encoder(self, x, index, mode):
         bsz, seq_len, channels = x.shape
         if seq_len != self.seq_len or channels != self.channels:
-            raise ValueError('RAFT input shape does not match configured seq_len/channels')
+            raise ValueError('PIBR input shape does not match configured seq_len/channels')
 
         border = self.data_borders.get(mode, 0)
         index_abs = index.to(x.device).long() + int(border)
 
         x_offset = x[:, -1:, :].detach()
         x_norm = x - x_offset
-        backbone = self.linear_x(x_norm.permute(0, 2, 1)).permute(0, 2, 1)
-        backbone = backbone + x_offset
+        lookback_trend = self.linear_x(x_norm.permute(0, 2, 1)).permute(0, 2, 1)
 
-        retrieved_future = self.retriever.retrieve(
+        retrieved_trend = self.retriever.retrieve(
             x,
             index_abs=index_abs,
             train=mode == 'train',
         )
 
-        pred = torch.cat([backbone, retrieved_future], dim=1)
+        pred = torch.cat([lookback_trend, retrieved_trend], dim=1)
         pred = self.linear_pred(pred.permute(0, 2, 1)).permute(0, 2, 1)
-        return pred.reshape(bsz, self.pred_len, self.channels)
+        pred = pred.reshape(bsz, self.pred_len, self.channels)
+        return pred + x_offset
 
     def forecast(self, x_enc, index, mode):
         return self.encoder(x_enc, index, mode)

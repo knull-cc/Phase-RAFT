@@ -1,4 +1,4 @@
-model_name=RAFT
+model_name=PIBR
 extra_args="$@"
 
 root_path_name=./dataset/Solar

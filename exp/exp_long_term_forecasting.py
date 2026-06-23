@@ -20,7 +20,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
     @staticmethod
     def _uses_retrieval_model(model_name):
-        return model_name in ['RAFT']
+        return model_name in ['PIBR']
 
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()

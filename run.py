@@ -14,10 +14,10 @@ if __name__ == '__main__':
                         help='task name, we currently support only long_term_forecast, options:[long_term_forecast]')
     parser.add_argument('--is_training', type=int, default=1, help='status')
     parser.add_argument('--model_id', type=str, default='temp', help='model id')
-    parser.add_argument('--model', type=str, default='RAFT',
-                        help='model name, options: [RAFT]')
+    parser.add_argument('--model', type=str, default='PIBR',
+                        help='model name, options: [PIBR]')
     parser.add_argument('-Phase', '--Phase', '--phase', action='store_true', dest='phase',
-                        help='compatibility flag; RAFT now always uses Phase-aligned IdeaBlock Retrieval')
+                        help='compatibility flag; PIBR always uses Phase-aligned IdeaBlock Retrieval')
 
     # data loader
     parser.add_argument('--data', type=str, required=True, default='ETTh1', help='dataset type')
@@ -152,7 +152,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     if args.phase:
-        args.model = 'RAFT'
+        args.model = 'PIBR'
     if args.cycle is not None:
         args.period_len = args.cycle
     if args.random_seed is not None:

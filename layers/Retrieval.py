@@ -68,7 +68,9 @@ class PhaseAlignedIdeaBlockRetrieval:
                 torch.tensor([index_abs], dtype=torch.long),
             ).squeeze(0)
             keys.append(key.cpu())
-            values.append(torch.as_tensor(seq_y[-self.pred_len:], dtype=torch.float32))
+            future = torch.as_tensor(seq_y[-self.pred_len:], dtype=torch.float32)
+            last_observed = torch.as_tensor(seq_x[-1:], dtype=torch.float32)
+            values.append(future - last_observed)
             abs_indices.append(index_abs)
 
         if not keys:
@@ -148,7 +150,7 @@ class PhaseAlignedIdeaBlockRetrieval:
         weights = F.softmax(top_sim / self.temperature, dim=1)
 
         values = self.values.to(device=x.device, dtype=x.dtype)
-        retrieved = torch.zeros(
+        retrieved_trend = torch.zeros(
             x.shape[0],
             self.pred_len,
             self.channels,
@@ -156,8 +158,8 @@ class PhaseAlignedIdeaBlockRetrieval:
             dtype=x.dtype,
         )
         for rank in range(k):
-            retrieved = retrieved + weights[:, rank, None, None] * values[top_idx[:, rank]]
-        return retrieved
+            retrieved_trend = retrieved_trend + weights[:, rank, None, None] * values[top_idx[:, rank]]
+        return retrieved_trend
 
     def _mask_self_overlap(self, sim, query_abs_index):
         train_abs = self.train_abs_indices.to(sim.device)
