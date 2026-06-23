@@ -48,6 +48,11 @@ def print_args(args):
     print(f'  {"Fusion Periods:":<20}{(args.period_list or args.period_len):<20}')
     print(f'  {"Fusion Scale:":<20}{args.phase_fusion_scale:<20}{"Latent Dim:":<20}{args.latent_dim:<20}')
     print(f'  {"Fusion Layers:":<20}{args.phase_layers:<20}')
+    print(f'  {"Phase Block:":<20}{args.phase_block:<20}{"PB Bank:":<20}{args.phase_block_bank_mode:<20}')
+    print(f'  {"PB Source:":<20}{args.phase_block_memory_source:<20}{"PB Chunk:":<20}{args.phase_block_query_chunk:<20}')
+    print(f'  {"PB Periods:":<20}{(args.phase_block_periods or "fft"):<20}{"PB Top-k:":<20}{args.phase_block_topk:<20}')
+    print(f'  {"PB Patch:":<20}{args.phase_block_patch:<20}{"PB Cycles:":<20}{args.phase_block_cycles:<20}')
+    print(f'  {"PB Alpha:":<20}{args.phase_block_alpha:<20}{"PB Sim Thres:":<20}{args.phase_block_sim_threshold:<20}')
     print()
 
     print("\033[1m" + "Run Parameters" + "\033[0m")

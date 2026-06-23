@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from layers.CrossPhaseRouting import MultiPeriodPhaseBranch
+from layers.PhaseBlock import PhaseBlockResidualMemory
 from layers.Retrieval import RetrievalTool
 
 class Model(nn.Module):
@@ -77,6 +78,28 @@ class Model(nn.Module):
             if self.phase_fusion_mode == 'residual':
                 self.phase_gate = nn.Parameter(torch.tensor(-4.0))
 
+        self.phase_block_enabled = getattr(configs, 'phase_block', False)
+        self.phase_block = None
+        if self.phase_block_enabled:
+            self.phase_block = PhaseBlockResidualMemory(
+                seq_len=self.seq_len,
+                pred_len=self.pred_len,
+                channels=self.channels,
+                periods=configs.phase_block_periods,
+                max_periods=configs.phase_block_max_periods,
+                min_period_strength=configs.phase_block_min_strength,
+                patch_width=configs.phase_block_patch,
+                num_cycles=configs.phase_block_cycles,
+                topk=configs.phase_block_topk,
+                temperature=configs.phase_block_temperature,
+                alpha=configs.phase_block_alpha,
+                sim_threshold=configs.phase_block_sim_threshold,
+                residual_var_scale=configs.phase_block_residual_var_scale,
+                stride=configs.phase_block_stride,
+                bank_mode=configs.phase_block_bank_mode,
+                query_chunk=configs.phase_block_query_chunk,
+            )
+
 #         if self.task_name == 'classification':
 #             self.projection = nn.Linear(
 #                 configs.enc_in * configs.seq_len, configs.num_class)
@@ -94,6 +117,11 @@ class Model(nn.Module):
 
     def prepare_dataset(self, train_data, valid_data, test_data):
         self.rt.prepare_dataset(train_data)
+        self.phase_block_borders = {
+            'train': getattr(train_data, 'border1', 0),
+            'valid': getattr(valid_data, 'border1', 0),
+            'test': getattr(test_data, 'border1', 0),
+        }
         
         self.retrieval_dict = {}
         
@@ -113,7 +141,23 @@ class Model(nn.Module):
         self.retrieval_dict['valid'] = valid_rt.detach()
         self.retrieval_dict['test'] = test_rt.detach()
 
-    def encoder(self, x, index, mode):
+    def prepare_phase_block(self, period_data):
+        if self.phase_block is None:
+            return
+        self.phase_block.estimate_periods(period_data)
+        self.phase_block.reset_memory()
+
+    def add_phase_block_memory(self, x, residual, index_abs=None):
+        if self.phase_block is None:
+            return
+        self.phase_block.add_batch(x, residual, index_abs=index_abs)
+
+    def finalize_phase_block_memory(self):
+        if self.phase_block is None:
+            return
+        self.phase_block.finalize_memory()
+
+    def encoder(self, x, index, mode, apply_phase_block=True):
         index_cpu = index.detach().cpu().long()
         
         bsz, seq_len, channels = x.shape
@@ -155,12 +199,21 @@ class Model(nn.Module):
                 pred = pred + phase_scale * phase_pred
         
         pred = pred + x_offset
+
+        if (
+            apply_phase_block
+            and mode == 'test'
+            and self.phase_block is not None
+        ):
+            border = self.phase_block_borders.get(mode, 0)
+            index_abs = index.to(x.device).long() + int(border)
+            pred = self.phase_block.correct(x, pred, index_abs=index_abs)
         
         return pred
 
-    def forecast(self, x_enc, index, mode):
+    def forecast(self, x_enc, index, mode, apply_phase_block=True):
         # Encoder
-        return self.encoder(x_enc, index, mode)
+        return self.encoder(x_enc, index, mode, apply_phase_block=apply_phase_block)
 
     def imputation(self, x_enc, index, mode):
         # Encoder
@@ -180,9 +233,9 @@ class Model(nn.Module):
         output = self.projection(output)
         return output
 
-    def forward(self, x_enc, index, mode='train'):
+    def forward(self, x_enc, index, mode='train', apply_phase_block=True):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
-            dec_out = self.forecast(x_enc, index, mode)
+            dec_out = self.forecast(x_enc, index, mode, apply_phase_block=apply_phase_block)
             return dec_out[:, -self.pred_len:, :]  # [B, L, D]
         if self.task_name == 'imputation':
             dec_out = self.imputation(x_enc, index, mode)

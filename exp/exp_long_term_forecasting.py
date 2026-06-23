@@ -24,6 +24,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
     def _uses_retrieval_model(model_name):
         return model_name in ['RAFT']
 
+    def _core_model(self):
+        return self.model.module if isinstance(self.model, nn.DataParallel) else self.model
+
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()
 
@@ -49,6 +52,60 @@ class Exp_Long_Term_Forecast(Exp_Basic):
     def _select_criterion(self):
         criterion = nn.MSELoss()
         return criterion
+
+    def _build_phase_block_memory(self):
+        if not getattr(self.args, 'phase_block', False) or not self._uses_retrieval_model(self.args.model):
+            return
+
+        core_model = self._core_model()
+        if not hasattr(core_model, 'prepare_phase_block'):
+            return
+
+        print('Building PhaseBlock residual memory')
+        train_data, train_loader = self._get_data(flag='train')
+        vali_data, vali_loader = self._get_data(flag='val')
+
+        period_data = getattr(train_data, 'data_x', None)
+        if period_data is None:
+            period_data = getattr(vali_data, 'data_x', None)
+        core_model.prepare_phase_block(period_data)
+
+        was_training = self.model.training
+        self.model.eval()
+
+        def feed_memory(data_set, loader, mode, min_index=None):
+            with torch.no_grad():
+                for index, batch_x, batch_y, batch_x_mark, batch_y_mark in loader:
+                    if min_index is not None:
+                        keep = index >= min_index
+                        if keep.sum().item() == 0:
+                            continue
+                        index = index[keep]
+                        batch_x = batch_x[keep]
+                        batch_y = batch_y[keep]
+
+                    index_abs = index + getattr(data_set, 'border1', 0)
+                    batch_x = batch_x.float().to(self.device)
+                    batch_y = batch_y.float().to(self.device)
+                    outputs = self.model(
+                        batch_x,
+                        index,
+                        mode=mode,
+                        apply_phase_block=False,
+                    )
+                    outputs = outputs[:, -self.args.pred_len:, :]
+                    true = batch_y[:, -self.args.pred_len:, :]
+                    residual = true - outputs
+                    core_model.add_phase_block_memory(batch_x, residual, index_abs=index_abs)
+
+        if self.args.phase_block_memory_source == 'train_roll_val':
+            roll_start = int(len(train_data) * self.args.phase_block_train_init_ratio)
+            feed_memory(train_data, train_loader, mode='train', min_index=roll_start)
+        feed_memory(vali_data, vali_loader, mode='valid')
+        core_model.finalize_phase_block_memory()
+
+        if was_training:
+            self.model.train()
 
     def vali(self, vali_data, vali_loader, criterion, mode='valid'):
         total_loss = []
@@ -188,6 +245,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if test:
             print('loading model')
             self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + setting, 'checkpoint.pth')))
+
+        self._build_phase_block_memory()
 
         preds = []
         trues = []

@@ -1,5 +1,20 @@
 --retrieval_variant C --topm 20 --phase_top_m 5 --phase_lambda 0.1 --phase_tau 2
 
+long_term_forecast_PEMS03_96_12_RAFT_PEMS_ftM_sl96_ll48_pl12_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.07152961939573288, mae:0.17543531954288483, dtw:-999
+
+long_term_forecast_PEMS03_96_24_RAFT_PEMS_ftM_sl96_ll48_pl24_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.0996859222650528, mae:0.20189598202705383, dtw:-999
+
+long_term_forecast_PEMS03_96_48_RAFT_PEMS_ftM_sl96_ll48_pl48_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.15389417111873627, mae:0.24431592226028442, dtw:-999
+
+long_term_forecast_PEMS03_96_96_RAFT_PEMS_ftM_sl96_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
+mse:0.2374095469713211, mae:0.30295529961586, dtw:-999
+
+------------------------------------------------------------------------------------------------------------
+
+
 long_term_forecast_ETTh1_96_96_RAFT_ETTh1_ftM_sl96_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_0  
 mse:0.3821253776550293, mae:0.4081939160823822, dtw:-999
 
@@ -70,3 +85,14 @@ mse:0.479023814201355, mae:0.483705997467041, dtw:-999
 
 ------------------------------------------------------------------------------------------------------------
 
+long_term_forecast_PEMS03_96_12_RAFT_PEMS_ftM_sl96_ll48_pl12_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_retB_m20_lam0.1_tau2.0_0  
+mse:0.07027365267276764, mae:0.1742297261953354, dtw:-999
+
+long_term_forecast_PEMS03_96_24_RAFT_PEMS_ftM_sl96_ll48_pl24_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_retB_m20_lam0.1_tau2.0_0  
+mse:0.09465553611516953, mae:0.19790804386138916, dtw:-999
+
+long_term_forecast_PEMS03_96_48_RAFT_PEMS_ftM_sl96_ll48_pl48_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_retB_m20_lam0.1_tau2.0_0  
+mse:0.1468813419342041, mae:0.2382155954837799, dtw:-999
+
+long_term_forecast_PEMS03_96_96_RAFT_PEMS_ftM_sl96_ll48_pl96_dm512_nh8_el2_dl1_df2048_expand2_dc4_fc1_ebtimeF_dtTrue_test_retB_m20_lam0.1_tau2.0_0
+mse:0.21771983802318573, mae:0.2919045686721802, dtw:-999
