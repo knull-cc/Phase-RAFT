@@ -50,8 +50,8 @@ class PhaseRoutingBranch(nn.Module):
 
     Folds the (offset-normalized) lookback window and the retrieved future into
     phase tokens, concatenates them along the period axis, runs cross-phase
-    routing, and predicts the future phase steps. The final predictor is
-    zero-initialized so the branch outputs 0 at init (acts as a pure residual).
+    routing, and predicts the future phase steps. In residual mode the final
+    predictor can be zero-initialized so the branch starts as a no-op.
     """
 
     def __init__(
@@ -65,6 +65,7 @@ class PhaseRoutingBranch(nn.Module):
         num_heads=4,
         dropout=0.1,
         rel_dim=0,
+        zero_init=True,
     ):
         super().__init__()
         self.period_len = period_len
@@ -83,8 +84,9 @@ class PhaseRoutingBranch(nn.Module):
             for _ in range(n_layers)
         ])
         self.predictor = nn.Linear(latent_dim, self.p_out)
-        nn.init.zeros_(self.predictor.weight)
-        nn.init.zeros_(self.predictor.bias)
+        if zero_init:
+            nn.init.zeros_(self.predictor.weight)
+            nn.init.zeros_(self.predictor.bias)
 
     def _to_phase(self, x, n_periods):
         # x: (B, L, C) -> (B, C, period_len, n_periods)
@@ -121,10 +123,10 @@ class PhaseRoutingBranch(nn.Module):
 class MultiPeriodPhaseBranch(nn.Module):
     """Models several phase resolutions in parallel (e.g. daily 24 + weekly 168).
 
-    Each period gets its own cross-phase routing branch; their (zero-initialized)
-    residual predictions are summed. This replaces RAFT's multi-scale patch
-    decomposition with simultaneous multi-phase modeling. The total residual
-    still starts at 0, preserving the no-regression guarantee.
+    Each period gets its own cross-phase routing branch; their predictions are
+    summed. In backbone mode this becomes the main prediction head, while
+    residual mode can keep zero-initialized no-op branches for conservative
+    ablations.
     """
 
     def __init__(
@@ -138,6 +140,7 @@ class MultiPeriodPhaseBranch(nn.Module):
         num_heads=4,
         dropout=0.1,
         rel_dim=0,
+        zero_init=True,
     ):
         super().__init__()
         if not periods:
@@ -154,6 +157,7 @@ class MultiPeriodPhaseBranch(nn.Module):
                 num_heads=num_heads,
                 dropout=dropout,
                 rel_dim=rel_dim,
+                zero_init=zero_init,
             )
             for p in self.periods
         ])

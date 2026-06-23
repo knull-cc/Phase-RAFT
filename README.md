@@ -21,9 +21,9 @@ python3 run.py --data [DATASET]
 ```
 python3 run.py --data [DATASET] -Phase
 ```
-This is shorthand for retrieval variant C plus phase-domain fusion:
+This is shorthand for retrieval variant C plus the phase-domain backbone:
 ```
-python3 run.py --data [DATASET] --retrieval_variant C --phase_fusion
+python3 run.py --data [DATASET] --retrieval_variant C --phase_fusion --phase_fusion_mode backbone
 ```
 4. Run the provided experiment scripts.
 ```
@@ -41,15 +41,19 @@ Phase-aware retrieval parameters:
 --topm 20 --phase_top_m 5 --phase_lambda 0.1 --phase_tau 2 --phase_period 24
 ```
 
-Phase-domain fusion can be enabled independently:
+Phase-domain fusion can be enabled independently. `residual` is the conservative
+add-on mode; `backbone` uses the phase-domain predictor as the main output head.
 ```
---phase_fusion --period_list 24
+--phase_fusion --phase_fusion_mode residual --period_list 24 --phase_fusion_scale 0.1
+--phase_fusion --phase_fusion_mode backbone --period_list 24
 ```
 
 Recommended ablations:
 ```
 --retrieval_variant A --topm 20
 --retrieval_variant B --topm 100 --phase_top_m 20 --phase_tau 2
---retrieval_variant B --topm 100 --phase_top_m 20 --phase_tau 2 --phase_fusion
---retrieval_variant C --topm 100 --phase_top_m 20 --phase_lambda 1.0 --phase_tau 2 --phase_fusion
+--retrieval_variant B --topm 100 --phase_top_m 20 --phase_tau 2 --phase_fusion --phase_fusion_scale 0.05
+--retrieval_variant C --topm 100 --phase_top_m 20 --phase_lambda 1.0 --phase_tau 2 --phase_fusion --phase_fusion_scale 0.05
+--retrieval_variant B --topm 100 --phase_top_m 20 --phase_tau 2 --phase_fusion --phase_fusion_mode backbone
+--retrieval_variant C --topm 100 --phase_top_m 20 --phase_lambda 1.0 --phase_tau 2 --phase_fusion --phase_fusion_mode backbone
 ```

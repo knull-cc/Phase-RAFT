@@ -123,7 +123,13 @@ if __name__ == '__main__':
         help='compatibility alias for --period_len'
     )
     parser.add_argument('--phase_fusion', '--phase-fusion', action='store_true', default=False,
-                        help='enable phase-domain residual fusion after RAFT retrieval')
+                        help='enable phase-domain fusion after RAFT retrieval')
+    parser.add_argument('--phase_fusion_mode', choices=['residual', 'backbone'], default=None,
+                        help='residual: add a gated phase residual to RAFT; '
+                             'backbone: use the phase-domain predictor as the main output head; '
+                             'defaults to backbone under -Phase and residual otherwise')
+    parser.add_argument('--phase_fusion_scale', type=float, default=0.1,
+                        help='max scale of phase-domain residual fusion')
     parser.add_argument('--no-phase-fusion', '--no_phase_fusion',
                         '--no-phase-routing', '--no_phase_routing',
                         action='store_true', dest='disable_phase_fusion', default=False,
@@ -203,6 +209,8 @@ if __name__ == '__main__':
     parser.add_argument('--extra_tag', type=str, default="", help="Anything extra")
 
     args = parser.parse_args()
+    if args.phase_fusion_mode is None:
+        args.phase_fusion_mode = 'backbone' if args.phase else 'residual'
     if args.phase:
         args.model = 'RAFT'
         if args.retrieval_variant == 'A':
@@ -211,6 +219,8 @@ if __name__ == '__main__':
             args.phase_fusion = True
     if args.disable_phase_fusion:
         args.phase_fusion = False
+    if args.phase_fusion_mode == 'backbone' and not args.disable_phase_fusion:
+        args.phase_fusion = True
     if args.cycle is not None:
         args.period_len = args.cycle
     if args.phase_period is None:
@@ -221,6 +231,8 @@ if __name__ == '__main__':
         raise ValueError('--topm must be positive')
     if args.phase_top_m <= 0:
         raise ValueError('--phase_top_m must be positive')
+    if args.phase_fusion_scale < 0:
+        raise ValueError('--phase_fusion_scale must be non-negative')
     if args.retrieval_variant != 'A' and args.phase_tau <= 0:
         raise ValueError('--phase_tau must be positive for phase-aware retrieval')
     if args.retrieval_variant != 'A' and args.phase_period <= 0:
@@ -234,7 +246,7 @@ if __name__ == '__main__':
             args.phase_tau,
         )
     if args.phase_fusion:
-        args.des = '{}_pf{}'.format(args.des, args.period_list or args.period_len)
+        args.des = '{}_pf{}_{}'.format(args.des, args.period_list or args.period_len, args.phase_fusion_mode)
 
     fix_seed = args.seed
     random.seed(fix_seed)

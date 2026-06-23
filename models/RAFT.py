@@ -58,6 +58,8 @@ class Model(nn.Module):
         self.retrieval_pred = nn.ModuleList(module_list)
         self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
         self.phase_fusion = configs.phase_fusion
+        self.phase_fusion_mode = getattr(configs, 'phase_fusion_mode', 'residual')
+        self.phase_fusion_scale = configs.phase_fusion_scale
         self.phase_branch = None
         if self.phase_fusion:
             self.phase_periods = self._parse_phase_periods(configs)
@@ -70,7 +72,10 @@ class Model(nn.Module):
                 num_routers=configs.phase_num_routers,
                 num_heads=configs.phase_heads,
                 dropout=configs.phase_attn_dropout,
+                zero_init=self.phase_fusion_mode == 'residual',
             )
+            if self.phase_fusion_mode == 'residual':
+                self.phase_gate = nn.Parameter(torch.tensor(-4.0))
 
 #         if self.task_name == 'classification':
 #             self.projection = nn.Linear(
@@ -142,7 +147,12 @@ class Model(nn.Module):
         pred = torch.cat([x_pred_from_x, retrieved_future], dim=1)
         pred = self.linear_pred(pred.permute(0, 2, 1)).permute(0, 2, 1).reshape(bsz, self.pred_len, self.channels)
         if self.phase_branch is not None:
-            pred = pred + self.phase_branch(x_norm, retrieved_future)
+            phase_pred = self.phase_branch(x_norm, retrieved_future)
+            if self.phase_fusion_mode == 'backbone':
+                pred = phase_pred
+            else:
+                phase_scale = self.phase_fusion_scale * torch.sigmoid(self.phase_gate)
+                pred = pred + phase_scale * phase_pred
         
         pred = pred + x_offset
         

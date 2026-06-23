@@ -44,8 +44,10 @@ def print_args(args):
     print(f'  {"Variant:":<20}{args.retrieval_variant:<20}{"Shape Top-k:":<20}{args.topm:<20}')
     print(f'  {"Phase Top-m:":<20}{args.phase_top_m:<20}{"Phase Period:":<20}{args.phase_period:<20}')
     print(f'  {"Phase Lambda:":<20}{args.phase_lambda:<20}{"Phase Tau:":<20}{args.phase_tau:<20}')
-    print(f'  {"Phase Fusion:":<20}{args.phase_fusion:<20}{"Fusion Periods:":<20}{(args.period_list or args.period_len):<20}')
-    print(f'  {"Latent Dim:":<20}{args.latent_dim:<20}{"Fusion Layers:":<20}{args.phase_layers:<20}')
+    print(f'  {"Phase Fusion:":<20}{args.phase_fusion:<20}{"Fusion Mode:":<20}{args.phase_fusion_mode:<20}')
+    print(f'  {"Fusion Periods:":<20}{(args.period_list or args.period_len):<20}')
+    print(f'  {"Fusion Scale:":<20}{args.phase_fusion_scale:<20}{"Latent Dim:":<20}{args.latent_dim:<20}')
+    print(f'  {"Fusion Layers:":<20}{args.phase_layers:<20}')
     print()
 
     print("\033[1m" + "Run Parameters" + "\033[0m")
