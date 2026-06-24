@@ -51,12 +51,14 @@ class PhaseAlignedIdeaBlockRetrieval:
         self.values = None
         self.train_abs_indices = None
         self.n_train = 0
+        self._clear_device_cache()
 
     @property
     def block_width(self):
         return 2 * self.phase_radius + 1
 
     def prepare_dataset(self, train_data):
+        self._clear_device_cache()
         keys = []
         phase_key_chunks = [[] for _ in range(self.period_len)] if self.horizon_wise_phase else None
         values = []
@@ -99,6 +101,7 @@ class PhaseAlignedIdeaBlockRetrieval:
         self.values = torch.stack(values, dim=0).float()
         self.train_abs_indices = torch.tensor(abs_indices, dtype=torch.long)
         self.n_train = self.keys.shape[0]
+        self._clear_device_cache()
         mode = 'horizon-wise' if self.horizon_wise_phase else 'sequence-wise'
         print(
             'Phase-aligned IdeaBlock memory: '
@@ -160,6 +163,48 @@ class PhaseAlignedIdeaBlockRetrieval:
         key = key - key.mean(dim=1, keepdim=True)
         return F.normalize(key, dim=1, eps=self.eps)
 
+    def _clear_device_cache(self):
+        self._keys_cache = None
+        self._keys_cache_device = None
+        self._phase_keys_cache = None
+        self._phase_keys_cache_device = None
+        self._values_cache = None
+        self._values_cache_device = None
+        self._values_cache_dtype = None
+        self._train_abs_cache = None
+        self._train_abs_cache_device = None
+
+    def _keys_on(self, device):
+        if self._keys_cache is None or self._keys_cache_device != device:
+            self._keys_cache = self.keys.to(device)
+            self._keys_cache_device = device
+        return self._keys_cache
+
+    def _phase_keys_on(self, device):
+        if self.phase_keys is None:
+            raise RuntimeError('horizon-wise phase memory has not been prepared')
+        if self._phase_keys_cache is None or self._phase_keys_cache_device != device:
+            self._phase_keys_cache = [keys.to(device) for keys in self.phase_keys]
+            self._phase_keys_cache_device = device
+        return self._phase_keys_cache
+
+    def _values_on(self, device, dtype):
+        if (
+            self._values_cache is None
+            or self._values_cache_device != device
+            or self._values_cache_dtype != dtype
+        ):
+            self._values_cache = self.values.to(device=device, dtype=dtype)
+            self._values_cache_device = device
+            self._values_cache_dtype = dtype
+        return self._values_cache
+
+    def _train_abs_on(self, device):
+        if self._train_abs_cache is None or self._train_abs_cache_device != device:
+            self._train_abs_cache = self.train_abs_indices.to(device)
+            self._train_abs_cache_device = device
+        return self._train_abs_cache
+
     def retrieve(self, x, index_abs, train=False):
         if self.keys is None or self.values is None:
             raise RuntimeError('IdeaBlock memory has not been prepared')
@@ -168,7 +213,7 @@ class PhaseAlignedIdeaBlockRetrieval:
             return self._retrieve_horizon_wise(x, index_abs, train=train)
 
         query = self.make_keys(x, index_abs, horizon_offset=None)
-        keys = self.keys.to(query.device)
+        keys = self._keys_on(query.device)
         sim = torch.matmul(query, keys.transpose(0, 1))
 
         if train:
@@ -178,70 +223,94 @@ class PhaseAlignedIdeaBlockRetrieval:
         top_sim, top_idx = torch.topk(sim, k, dim=1)
         weights = F.softmax(top_sim / self.temperature, dim=1)
 
-        values = self.values.to(device=x.device, dtype=x.dtype)
-        retrieved_trend = torch.zeros(
-            x.shape[0],
-            self.pred_len,
-            self.channels,
-            device=x.device,
-            dtype=x.dtype,
-        )
-        for rank in range(k):
-            retrieved_trend = retrieved_trend + weights[:, rank, None, None] * values[top_idx[:, rank]]
-        return retrieved_trend
+        values = self._values_on(x.device, x.dtype)
+        return (weights[:, :, None, None] * values[top_idx]).sum(dim=1)
 
     def _retrieve_horizon_wise(self, x, index_abs, train=False):
         if self.phase_keys is None:
             raise RuntimeError('horizon-wise phase memory has not been prepared')
 
         bsz = x.shape[0]
-        values = self.values.to(device=x.device, dtype=x.dtype)
-        retrieved_steps = []
+        phase_keys = self._phase_keys_on(x.device)
+        values = self._values_on(x.device, x.dtype)
+        index_abs_device = index_abs.to(x.device).long()
+        horizons = torch.arange(self.pred_len, device=x.device, dtype=torch.long)
+        offset_count = min(self.period_len, self.pred_len)
+        offsets = torch.arange(offset_count, device=x.device, dtype=torch.long)
+        k = min(self.topk, self.n_train)
 
-        for horizon in range(self.pred_len):
+        # Query IdeaBlocks only depend on future phase, so h and h + P reuse the same key.
+        query_chunks = []
+        for offset in range(offset_count):
             horizon_offset = torch.full(
                 (bsz,),
-                horizon,
+                offset,
                 device=x.device,
                 dtype=torch.long,
             )
-            query = self.make_keys(x, index_abs, horizon_offset=horizon_offset)
-            k = min(self.topk, self.n_train)
-            step_values = values[:, horizon, :]
-            retrieved_step = torch.zeros(
-                bsz,
-                self.channels,
-                device=x.device,
-                dtype=x.dtype,
-            )
+            query_chunks.append(self.make_keys(x, index_abs, horizon_offset=horizon_offset))
 
-            query_phase = (index_abs.to(x.device).long() + self.seq_len + horizon) % self.period_len
-            for phase in torch.unique(query_phase):
-                phase_id = int(phase.item())
-                row_idx = torch.nonzero(query_phase == phase, as_tuple=False).squeeze(1)
-                keys = self.phase_keys[phase_id].to(x.device)
-                sim = torch.matmul(query[row_idx], keys.transpose(0, 1))
-                if train:
-                    sim = self._mask_self_overlap(sim, index_abs[row_idx])
+        query = torch.stack(query_chunks, dim=1)
+        query_flat = query.reshape(bsz * offset_count, -1)
+        query_phase = (index_abs_device[:, None] + self.seq_len + offsets[None, :]) % self.period_len
+        query_phase_flat = query_phase.reshape(-1)
+        query_abs_flat = index_abs_device[:, None].expand(-1, offset_count).reshape(-1)
+        pair_top_idx = torch.empty(
+            bsz * offset_count,
+            k,
+            device=x.device,
+            dtype=torch.long,
+        )
+        pair_weights = torch.empty(
+            bsz * offset_count,
+            k,
+            device=x.device,
+            dtype=query.dtype,
+        )
 
-                top_sim, top_idx = torch.topk(sim, k, dim=1)
-                weights = F.softmax(top_sim / self.temperature, dim=1)
-                phase_step = torch.zeros(
-                    row_idx.shape[0],
-                    self.channels,
-                    device=x.device,
-                    dtype=x.dtype,
-                )
-                for rank in range(k):
-                    phase_step = phase_step + weights[:, rank, None] * step_values[top_idx[:, rank]]
-                retrieved_step[row_idx] = phase_step
+        for phase in torch.unique(query_phase_flat):
+            phase_id = int(phase.item())
+            flat_idx = torch.nonzero(query_phase_flat == phase, as_tuple=False).squeeze(1)
+            keys = phase_keys[phase_id]
+            sim = torch.matmul(query_flat[flat_idx], keys.transpose(0, 1))
+            if train:
+                sim = self._mask_self_overlap(sim, query_abs_flat[flat_idx])
 
-            retrieved_steps.append(retrieved_step)
+            top_sim, top_idx = torch.topk(sim, k, dim=1)
+            weights = F.softmax(top_sim / self.temperature, dim=1)
+            pair_top_idx[flat_idx] = top_idx
+            pair_weights[flat_idx] = weights
 
-        return torch.stack(retrieved_steps, dim=1)
+        horizon_offsets = horizons % self.period_len
+        pair_ids = (
+            torch.arange(bsz, device=x.device, dtype=torch.long)[:, None] * offset_count
+            + horizon_offsets[None, :]
+        )
+        retrieved = torch.empty(
+            bsz,
+            self.pred_len,
+            self.channels,
+            device=x.device,
+            dtype=x.dtype,
+        )
+        max_gather_values = 8_000_000
+        horizon_chunk = max(1, max_gather_values // (bsz * k * self.channels))
+        # Chunk the final value gather so high-channel datasets do not allocate B*H*K*C at once.
+        for start in range(0, self.pred_len, horizon_chunk):
+            end = min(start + horizon_chunk, self.pred_len)
+            chunk_pair_ids = pair_ids[:, start:end]
+            chunk_top_idx = pair_top_idx[chunk_pair_ids]
+            chunk_weights = pair_weights[chunk_pair_ids]
+            chunk_horizons = horizons[start:end][None, :, None].expand(bsz, end - start, k)
+            gathered_values = values[chunk_top_idx, chunk_horizons, :]
+            retrieved[:, start:end, :] = (
+                chunk_weights[:, :, :, None] * gathered_values
+            ).sum(dim=2)
+
+        return retrieved
 
     def _mask_self_overlap(self, sim, query_abs_index):
-        train_abs = self.train_abs_indices.to(sim.device)
+        train_abs = self._train_abs_on(sim.device)
         query_abs_index = query_abs_index.to(sim.device).long()
         gap = self.seq_len + self.pred_len
         overlap = (train_abs[None, :] - query_abs_index[:, None]).abs() < gap
