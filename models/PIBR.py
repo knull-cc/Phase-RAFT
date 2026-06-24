@@ -22,6 +22,7 @@ class Model(nn.Module):
             'imputation',
         ] else configs.pred_len
         self.channels = configs.enc_in
+        self.test_retrieval = getattr(configs, 'test_retrieval', False)
 
         self.linear_x = nn.Linear(self.seq_len, self.pred_len)
         self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
@@ -63,6 +64,8 @@ class Model(nn.Module):
             index_abs=index_abs,
             train=mode == 'train',
         )
+        if self.test_retrieval:
+            return retrieved_trend + x_offset
 
         pred = torch.cat([lookback_trend, retrieved_trend], dim=1)
         pred = self.linear_pred(pred.permute(0, 2, 1)).permute(0, 2, 1)

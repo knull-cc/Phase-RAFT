@@ -87,6 +87,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return total_loss
 
     def train(self, setting):
+        if getattr(self.args, 'test_retrieval', False):
+            print('Retrieval-only evaluation: skip training and run test directly.')
+            return self.model
+
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
         test_data, test_loader = self._get_data(flag='test')
