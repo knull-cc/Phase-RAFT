@@ -12,21 +12,20 @@ and flattening that phase-aligned local block:
 
 ```
 Key   = Phase-aligned IdeaBlock(p, r)
-Value = future residual after phase-aligned anchoring
+Value = backbone forecast error on a similar historical block
 ```
 
-In code, the memory stores the phase-anchored future residual. For each future
-horizon `h`, the anchor is the latest observed point whose phase matches that
-future timestamp:
+The default training flow first warms up the backbone, then refreshes the
+retrieval memory with the backbone's training-set residuals:
 
 ```
-Value[h] = future[h] - observed_same_phase_anchor[h]
+Value[h] = true_future[h] - backbone(input)[h]
 ```
 
 At prediction time, the current input is converted into the same IdeaBlock
-query, the model retrieves similar historical keys, aggregates their anchored
-future residuals, adds the current sample's same-phase anchor back, and fuses
-the retrieved future with the lookback prediction through a residual gate.
+query, the model retrieves similar historical errors, aggregates them, and
+adds the retrieved correction to the backbone forecast. The older direct-future
+target is kept as an ablation through `--retrieval-target future`.
 
 ## Components
 
@@ -35,9 +34,9 @@ the retrieved future with the lookback prediction through a residual gate.
 2. **IdeaBlock Construction**: build `Phase-aligned IdeaBlock(p, r)` from
    phases around `p` over previous cycles.
 3. **Key-Value Memory**: store IdeaBlock keys from the training set and their
-   phase-anchored future residual values.
-4. **Future Retrieval Fusion**: retrieve anchored futures, then blend them with
-   the backbone forecast through a trainable residual gate.
+   backbone error values.
+4. **Error Retrieval Correction**: retrieve historical backbone errors and add
+   them to the current backbone forecast.
 
 ## Usage
 
@@ -70,8 +69,9 @@ python3 run.py \
   --idea_block_radius 1 \
   --idea_block_cycles 4 \
   --topm 20 \
-  --value-anchor phase \
-  --fusion-mode linear
+  --retrieval-target error \
+  --backbone-warmup-epochs 5 \
+  --refresh-memory-every 1
 ```
 
 Core retrieval parameters:
@@ -82,6 +82,10 @@ Core retrieval parameters:
 --idea_block_cycles N   # number of previous cycles in each key
 --topm K                # retrieved neighbors
 --temperature T         # softmax temperature for retrieved future aggregation
+--retrieval-target error  # default: retrieve backbone residual errors
+--backbone-warmup-epochs N # backbone-only epochs before building error memory
+--refresh-memory-every N   # refresh error memory after warmup; 0 builds once only
+--retrieval-target future  # ablation: retrieve direct future residuals
 --value-anchor phase    # store Value as future minus same-phase historical anchor
 --value-anchor last     # ablation: store Value as future minus last observed point
 --fusion-mode linear    # baseline-initialized linear fusion over backbone/retrieval

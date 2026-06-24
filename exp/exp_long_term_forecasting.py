@@ -48,6 +48,51 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         criterion = nn.MSELoss()
         return criterion
 
+    def _model_module(self):
+        return self.model.module if isinstance(self.model, nn.DataParallel) else self.model
+
+    def _uses_error_memory(self):
+        return (
+            self._uses_retrieval_model(self.args.model)
+            and getattr(self.args, 'retrieval_target', 'future') == 'error'
+            and getattr(self.args, 'fusion_mode', 'linear') != 'none'
+        )
+
+    def _set_retrieval_enabled(self, enabled):
+        model = self._model_module()
+        if hasattr(model, 'set_retrieval_enabled'):
+            model.set_retrieval_enabled(enabled)
+
+    def _refresh_error_memory(self, train_loader):
+        model = self._model_module()
+        was_training = self.model.training
+        values = torch.empty(
+            model.retriever.n_train,
+            model.pred_len,
+            model.channels,
+            dtype=torch.float32,
+        )
+
+        self._set_retrieval_enabled(False)
+        self.model.eval()
+        refresh_time = time.time()
+        with torch.no_grad():
+            for index, batch_x, batch_y, batch_x_mark, batch_y_mark in train_loader:
+                batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float().to(self.device)
+                backbone_pred = model.backbone_forecast(batch_x)
+                true_future = batch_y[:, -self.args.pred_len:, :]
+                residual = true_future - backbone_pred
+                values[index.long()] = residual.detach().cpu()
+
+        model.set_memory_values(values)
+        self._set_retrieval_enabled(True)
+        if was_training:
+            self.model.train()
+        else:
+            self.model.eval()
+        print('Refreshed PIBR error memory in {:.2f}s'.format(time.time() - refresh_time))
+
     def vali(self, vali_data, vali_loader, criterion, mode='valid'):
         total_loss = []
         self.model.eval()
@@ -108,8 +153,28 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         best_valid_loss = float('inf')
         best_model_state = None
+        best_memory_values = None
+        best_retrieval_enabled = False
+        use_error_memory = self._uses_error_memory()
+        warmup_epochs = max(0, int(getattr(self.args, 'backbone_warmup_epochs', 0)))
+        refresh_every = max(0, int(getattr(self.args, 'refresh_memory_every', 1)))
+        if use_error_memory:
+            self._set_retrieval_enabled(False)
             
         for epoch in range(self.args.train_epochs):
+            if use_error_memory:
+                enable_retrieval = epoch >= warmup_epochs
+                should_refresh = (
+                    enable_retrieval
+                    and (
+                        epoch == warmup_epochs
+                        or (refresh_every > 0 and (epoch - warmup_epochs) % refresh_every == 0)
+                    )
+                )
+                if should_refresh:
+                    self._refresh_error_memory(train_loader)
+                self._set_retrieval_enabled(enable_retrieval)
+
             iter_count = 0
             train_loss = []
 
@@ -175,6 +240,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     name: value.detach().cpu().clone()
                     for name, value in self.model.state_dict().items()
                 }
+                model = self._model_module()
+                if use_error_memory and model.retrieval_enabled:
+                    best_memory_values = model.retriever.values.detach().cpu().clone()
+                    best_retrieval_enabled = True
+                else:
+                    best_memory_values = None
+                    best_retrieval_enabled = False
                 best_valid_loss = vali_loss
                 
         if best_model_state is None:
@@ -186,6 +258,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         best_model_path = path + '/' + 'checkpoint.pth'
         torch.save(best_model_state, best_model_path)
         self.model.load_state_dict(best_model_state)
+        if use_error_memory:
+            model = self._model_module()
+            if best_memory_values is not None:
+                model.set_memory_values(best_memory_values)
+            model.set_retrieval_enabled(best_retrieval_enabled)
 
         return self.model
 

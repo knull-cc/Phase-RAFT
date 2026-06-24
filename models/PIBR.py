@@ -24,14 +24,19 @@ class Model(nn.Module):
         self.channels = configs.enc_in
 
         self.linear_x = nn.Linear(self.seq_len, self.pred_len)
+        self.retrieval_target = getattr(configs, 'retrieval_target', 'error')
+        if self.retrieval_target not in ['future', 'error']:
+            raise ValueError("retrieval_target must be 'future' or 'error'")
+        self.retrieval_enabled = self.retrieval_target != 'error'
+
         self.fusion_mode = getattr(configs, 'fusion_mode', 'linear')
         if self.fusion_mode not in ['linear', 'gate', 'none']:
             raise ValueError("fusion_mode must be 'linear', 'gate', or 'none'")
 
-        if self.fusion_mode == 'linear':
+        if self.retrieval_target == 'future' and self.fusion_mode == 'linear':
             self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
             self._init_linear_fusion()
-        elif self.fusion_mode == 'gate':
+        elif self.retrieval_target == 'future' and self.fusion_mode == 'gate':
             gate_init = float(getattr(configs, 'retrieval_gate_init', -2.0))
             self.retrieval_gate_logit = nn.Parameter(
                 torch.full((1, self.pred_len, self.channels), gate_init)
@@ -58,6 +63,12 @@ class Model(nn.Module):
             eye = torch.eye(self.pred_len)
             self.linear_pred.weight[:, :self.pred_len].copy_(eye)
 
+    def set_retrieval_enabled(self, enabled):
+        self.retrieval_enabled = bool(enabled)
+
+    def set_memory_values(self, values):
+        self.retriever.set_values(values)
+
     def prepare_dataset(self, train_data, valid_data=None, test_data=None):
         self.retriever.prepare_dataset(train_data)
         self.data_borders = {
@@ -65,6 +76,12 @@ class Model(nn.Module):
             'valid': int(getattr(valid_data, 'border1', 0)) if valid_data is not None else 0,
             'test': int(getattr(test_data, 'border1', 0)) if test_data is not None else 0,
         }
+
+    def backbone_forecast(self, x):
+        x_offset = x[:, -1:, :].detach()
+        x_norm = x - x_offset
+        lookback_trend = self.linear_x(x_norm.permute(0, 2, 1)).permute(0, 2, 1)
+        return lookback_trend + x_offset
 
     def encoder(self, x, index, mode):
         bsz, seq_len, channels = x.shape
@@ -74,19 +91,24 @@ class Model(nn.Module):
         border = self.data_borders.get(mode, 0)
         index_abs = index.to(x.device).long() + int(border)
 
-        x_offset = x[:, -1:, :].detach()
-        x_norm = x - x_offset
-        lookback_trend = self.linear_x(x_norm.permute(0, 2, 1)).permute(0, 2, 1)
-        backbone_pred = lookback_trend + x_offset
+        backbone_pred = self.backbone_forecast(x)
+
+        if not self.retrieval_enabled or self.fusion_mode == 'none':
+            return backbone_pred.reshape(bsz, self.pred_len, self.channels)
+
+        if self.retrieval_target == 'error':
+            correction = self.retriever.retrieve_values(
+                x,
+                index_abs=index_abs,
+                train=mode == 'train',
+            )
+            return (backbone_pred + correction).reshape(bsz, self.pred_len, self.channels)
 
         retrieved_future = self.retriever.retrieve(
             x,
             index_abs=index_abs,
             train=mode == 'train',
         )
-
-        if self.fusion_mode == 'none':
-            return backbone_pred.reshape(bsz, self.pred_len, self.channels)
 
         if self.fusion_mode == 'gate':
             gate = torch.sigmoid(self.retrieval_gate_logit).to(dtype=x.dtype)

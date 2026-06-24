@@ -239,12 +239,22 @@ class PhaseAlignedIdeaBlockRetrieval:
             self._train_abs_cache_device = device
         return self._train_abs_cache
 
-    def retrieve(self, x, index_abs, train=False):
+    def set_values(self, values):
+        values = values.detach().cpu().float()
+        expected = (self.n_train, self.pred_len, self.channels)
+        if tuple(values.shape) != expected:
+            raise ValueError(f'IdeaBlock values must have shape {expected}, got {tuple(values.shape)}')
+        self.values = values
+        self._values_cache = None
+        self._values_cache_device = None
+        self._values_cache_dtype = None
+
+    def retrieve_values(self, x, index_abs, train=False):
         if self.keys is None or self.values is None:
             raise RuntimeError('IdeaBlock memory has not been prepared')
 
         if self.horizon_wise_phase:
-            return self._retrieve_horizon_wise(x, index_abs, train=train)
+            return self._retrieve_horizon_wise_values(x, index_abs, train=train)
 
         query = self.make_keys(x, index_abs, horizon_offset=None)
         keys = self._keys_on(query.device)
@@ -258,10 +268,13 @@ class PhaseAlignedIdeaBlockRetrieval:
         weights = F.softmax(top_sim / self.temperature, dim=1)
 
         values = self._values_on(x.device, x.dtype)
-        residual = (weights[:, :, None, None] * values[top_idx]).sum(dim=1)
+        return (weights[:, :, None, None] * values[top_idx]).sum(dim=1)
+
+    def retrieve(self, x, index_abs, train=False):
+        residual = self.retrieve_values(x, index_abs, train=train)
         return self.make_future_anchors(x, index_abs).to(dtype=x.dtype) + residual
 
-    def _retrieve_horizon_wise(self, x, index_abs, train=False):
+    def _retrieve_horizon_wise_values(self, x, index_abs, train=False):
         if self.phase_keys is None:
             raise RuntimeError('horizon-wise phase memory has not been prepared')
 
@@ -342,7 +355,7 @@ class PhaseAlignedIdeaBlockRetrieval:
                 chunk_weights[:, :, :, None] * gathered_values
             ).sum(dim=2)
 
-        return self.make_future_anchors(x, index_abs).to(dtype=x.dtype) + retrieved
+        return retrieved
 
     def _mask_self_overlap(self, sim, query_abs_index):
         train_abs = self._train_abs_on(sim.device)
