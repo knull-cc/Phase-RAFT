@@ -128,9 +128,7 @@ class PhaseAlignedIdeaBlockRetrieval:
         block = torch.gather(x_norm, dim=1, index=gather_index)
         block = block * valid.reshape(bsz, -1, 1).float()
 
-        block = block.reshape(bsz, -1)
-        mask = valid.float().reshape(bsz, -1)
-        key = torch.cat([block, mask], dim=1)
+        key = block.reshape(bsz, -1)
         key = key - key.mean(dim=1, keepdim=True)
         return F.normalize(key, dim=1, eps=self.eps)
 
