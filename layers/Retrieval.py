@@ -21,6 +21,7 @@ class PhaseAlignedIdeaBlockRetrieval:
         num_cycles=4,
         topk=20,
         temperature=0.1,
+        horizon_wise_phase=False,
         eps=1e-6,
     ):
         if period_len <= 0:
@@ -42,9 +43,11 @@ class PhaseAlignedIdeaBlockRetrieval:
         self.num_cycles = num_cycles
         self.topk = topk
         self.temperature = temperature
+        self.horizon_wise_phase = horizon_wise_phase
         self.eps = eps
 
         self.keys = None
+        self.phase_keys = None
         self.values = None
         self.train_abs_indices = None
         self.n_train = 0
@@ -55,6 +58,7 @@ class PhaseAlignedIdeaBlockRetrieval:
 
     def prepare_dataset(self, train_data):
         keys = []
+        phase_key_chunks = [[] for _ in range(self.period_len)] if self.horizon_wise_phase else None
         values = []
         abs_indices = []
         base_index = int(getattr(train_data, 'border1', 0))
@@ -66,8 +70,18 @@ class PhaseAlignedIdeaBlockRetrieval:
             key = self.make_keys(
                 x,
                 torch.tensor([index_abs], dtype=torch.long),
+                horizon_offset=None,
             ).squeeze(0)
             keys.append(key.cpu())
+            if self.horizon_wise_phase:
+                for phase in range(self.period_len):
+                    horizon_offset = (phase - (index_abs + self.seq_len)) % self.period_len
+                    phase_key = self.make_keys(
+                        x,
+                        torch.tensor([index_abs], dtype=torch.long),
+                        horizon_offset=torch.tensor([horizon_offset], dtype=torch.long),
+                    ).squeeze(0)
+                    phase_key_chunks[phase].append(phase_key.cpu())
             future = torch.as_tensor(seq_y[-self.pred_len:], dtype=torch.float32)
             last_observed = torch.as_tensor(seq_x[-1:], dtype=torch.float32)
             values.append(future - last_observed)
@@ -77,21 +91,29 @@ class PhaseAlignedIdeaBlockRetrieval:
             raise ValueError('cannot build IdeaBlock memory from an empty training set')
 
         self.keys = torch.stack(keys, dim=0).float()
+        if self.horizon_wise_phase:
+            self.phase_keys = [
+                torch.stack(phase_keys, dim=0).float()
+                for phase_keys in phase_key_chunks
+            ]
         self.values = torch.stack(values, dim=0).float()
         self.train_abs_indices = torch.tensor(abs_indices, dtype=torch.long)
         self.n_train = self.keys.shape[0]
+        mode = 'horizon-wise' if self.horizon_wise_phase else 'sequence-wise'
         print(
             'Phase-aligned IdeaBlock memory: '
             f'{self.n_train} keys, P={self.period_len}, '
-            f'r={self.phase_radius}, cycles={self.num_cycles}'
+            f'r={self.phase_radius}, cycles={self.num_cycles}, mode={mode}'
         )
 
-    def make_keys(self, x, index_abs):
+    def make_keys(self, x, index_abs, horizon_offset=None):
         """Build normalized Phase-aligned IdeaBlock keys.
 
         ``index_abs`` is the absolute start index of each lookback window.
-        The center phase is the last observed timestamp:
-        ``(index_abs + seq_len - 1) % period_len``.
+        By default, the center phase is the last observed timestamp:
+        ``(index_abs + seq_len - 1) % period_len``. When ``horizon_offset`` is
+        given, the center phase is the corresponding future timestamp:
+        ``(index_abs + seq_len + horizon_offset) % period_len``.
         """
 
         x = x.float()
@@ -110,7 +132,11 @@ class PhaseAlignedIdeaBlockRetrieval:
         )
         cycles = torch.arange(self.num_cycles, device=x.device, dtype=torch.long)
 
-        center_phase = (index_abs + self.seq_len - 1) % self.period_len
+        if horizon_offset is None:
+            center_phase = (index_abs + self.seq_len - 1) % self.period_len
+        else:
+            horizon_offset = horizon_offset.to(x.device).long()
+            center_phase = (index_abs + self.seq_len + horizon_offset) % self.period_len
         end_phase = (index_abs + self.seq_len - 1) % self.period_len
         target_phase = (center_phase[:, None] + deltas[None, :]) % self.period_len
         steps_back = (end_phase[:, None] - target_phase) % self.period_len
@@ -138,7 +164,10 @@ class PhaseAlignedIdeaBlockRetrieval:
         if self.keys is None or self.values is None:
             raise RuntimeError('IdeaBlock memory has not been prepared')
 
-        query = self.make_keys(x, index_abs)
+        if self.horizon_wise_phase:
+            return self._retrieve_horizon_wise(x, index_abs, train=train)
+
+        query = self.make_keys(x, index_abs, horizon_offset=None)
         keys = self.keys.to(query.device)
         sim = torch.matmul(query, keys.transpose(0, 1))
 
@@ -160,6 +189,56 @@ class PhaseAlignedIdeaBlockRetrieval:
         for rank in range(k):
             retrieved_trend = retrieved_trend + weights[:, rank, None, None] * values[top_idx[:, rank]]
         return retrieved_trend
+
+    def _retrieve_horizon_wise(self, x, index_abs, train=False):
+        if self.phase_keys is None:
+            raise RuntimeError('horizon-wise phase memory has not been prepared')
+
+        bsz = x.shape[0]
+        values = self.values.to(device=x.device, dtype=x.dtype)
+        retrieved_steps = []
+
+        for horizon in range(self.pred_len):
+            horizon_offset = torch.full(
+                (bsz,),
+                horizon,
+                device=x.device,
+                dtype=torch.long,
+            )
+            query = self.make_keys(x, index_abs, horizon_offset=horizon_offset)
+            k = min(self.topk, self.n_train)
+            step_values = values[:, horizon, :]
+            retrieved_step = torch.zeros(
+                bsz,
+                self.channels,
+                device=x.device,
+                dtype=x.dtype,
+            )
+
+            query_phase = (index_abs.to(x.device).long() + self.seq_len + horizon) % self.period_len
+            for phase in torch.unique(query_phase):
+                phase_id = int(phase.item())
+                row_idx = torch.nonzero(query_phase == phase, as_tuple=False).squeeze(1)
+                keys = self.phase_keys[phase_id].to(x.device)
+                sim = torch.matmul(query[row_idx], keys.transpose(0, 1))
+                if train:
+                    sim = self._mask_self_overlap(sim, index_abs[row_idx])
+
+                top_sim, top_idx = torch.topk(sim, k, dim=1)
+                weights = F.softmax(top_sim / self.temperature, dim=1)
+                phase_step = torch.zeros(
+                    row_idx.shape[0],
+                    self.channels,
+                    device=x.device,
+                    dtype=x.dtype,
+                )
+                for rank in range(k):
+                    phase_step = phase_step + weights[:, rank, None] * step_values[top_idx[:, rank]]
+                retrieved_step[row_idx] = phase_step
+
+            retrieved_steps.append(retrieved_step)
+
+        return torch.stack(retrieved_steps, dim=1)
 
     def _mask_self_overlap(self, sim, query_abs_index):
         train_abs = self.train_abs_indices.to(sim.device)

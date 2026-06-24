@@ -101,8 +101,9 @@ if __name__ == '__main__':
                         help='phase neighborhood radius r around center phase p')
     parser.add_argument('--idea_block_cycles', type=int, default=4,
                         help='number of past cycles aligned inside each IdeaBlock key')
-    parser.add_argument('--test_retrieval', action='store_true', default=False,
-                        help='evaluate retrieval-only forecast: retrieved trend + current last value')
+    parser.add_argument('--horizon-wise-phase', '--horizon_wise_phase',
+                        action='store_true', dest='horizon_wise_phase', default=False,
+                        help='retrieve each forecast horizon from its own future phase query')
 
     # optimization
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
@@ -176,8 +177,8 @@ if __name__ == '__main__':
         args.idea_block_cycles,
         args.topm,
     )
-    if args.test_retrieval:
-        args.des = '{}_retrieval_only'.format(args.des)
+    if args.horizon_wise_phase:
+        args.des = '{}_hwp'.format(args.des)
 
     fix_seed = args.seed
     random.seed(fix_seed)
@@ -262,5 +263,5 @@ if __name__ == '__main__':
 
         exp = Exp(args)  # set experiments
         print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-        exp.test(setting, test=0 if args.test_retrieval else 1)
+        exp.test(setting, test=1)
         torch.cuda.empty_cache()

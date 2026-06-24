@@ -75,6 +75,7 @@ Core retrieval parameters:
 --idea_block_cycles N   # number of previous cycles in each key
 --topm K                # retrieved neighbors
 --temperature T         # softmax temperature for retrieved future aggregation
+--horizon-wise-phase    # retrieve each horizon step from its own future phase
 ```
 
 `-Phase` is accepted as a compatibility flag, but `PIBR` always uses
