@@ -25,7 +25,6 @@ class Model(nn.Module):
 
         self.linear_x = nn.Linear(self.seq_len, self.pred_len)
         self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
-        self._init_fusion_as_backbone()
 
         self.retriever = PhaseAlignedIdeaBlockRetrieval(
             seq_len=self.seq_len,
@@ -38,13 +37,6 @@ class Model(nn.Module):
             temperature=configs.temperature,
         )
         self.data_borders = {}
-
-    def _init_fusion_as_backbone(self):
-        with torch.no_grad():
-            self.linear_pred.weight.zero_()
-            self.linear_pred.bias.zero_()
-            eye = torch.eye(self.pred_len)
-            self.linear_pred.weight[:, :self.pred_len].copy_(eye)
 
     def prepare_dataset(self, train_data, valid_data=None, test_data=None):
         self.retriever.prepare_dataset(train_data)
