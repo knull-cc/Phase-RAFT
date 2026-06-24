@@ -80,49 +80,6 @@ if __name__ == '__main__':
         '--output_attention', action='store_true',
         help='whether to output attention in ecoder'
     )
-    parser.add_argument(
-        '--topm', type=int, default=20,
-        help='top-k Phase-aligned IdeaBlock neighbors'
-    )
-    parser.add_argument(
-        '--temperature', type=float, default=0.1,
-        help='softmax temperature for IdeaBlock value aggregation'
-    )
-    parser.add_argument(
-        '--period_len', type=int, default=24,
-        help='period length P used for phase alignment'
-    )
-    parser.add_argument(
-        '--cycle', type=int, default=None,
-        help='compatibility alias for --period_len'
-    )
-    parser.add_argument('--idea_block_radius', '--phase_radius', type=int, default=1,
-                        dest='idea_block_radius',
-                        help='phase neighborhood radius r around center phase p')
-    parser.add_argument('--idea_block_cycles', type=int, default=4,
-                        help='number of past cycles aligned inside each IdeaBlock key')
-    parser.add_argument('--horizon-wise-phase', '--horizon_wise_phase',
-                        action='store_true', dest='horizon_wise_phase', default=False,
-                        help='retrieve each forecast horizon from its own future phase query')
-    parser.add_argument('--value-anchor', '--value_anchor', type=str, default='phase',
-                        choices=['phase', 'last'], dest='value_anchor',
-                        help='anchor used for retrieved Value residuals')
-    parser.add_argument('--retrieval-target', '--retrieval_target', type=str, default='error',
-                        choices=['future', 'error'], dest='retrieval_target',
-                        help='memory Value target: direct future residuals or backbone error residuals')
-    parser.add_argument('--fusion-mode', '--fusion_mode', type=str, default='linear',
-                        choices=['linear', 'gate', 'none'], dest='fusion_mode',
-                        help='how retrieved futures are fused with the backbone forecast')
-    parser.add_argument('--retrieval-gate-init', '--retrieval_gate_init',
-                        type=float, default=-2.0, dest='retrieval_gate_init',
-                        help='initial logit for residual retrieval fusion gate when --fusion-mode gate')
-    parser.add_argument('--backbone-warmup-epochs', '--backbone_warmup_epochs',
-                        type=int, default=5, dest='backbone_warmup_epochs',
-                        help='backbone-only epochs before building error memory')
-    parser.add_argument('--refresh-memory-every', '--refresh_memory_every',
-                        type=int, default=1, dest='refresh_memory_every',
-                        help='epochs between error memory refreshes after warmup; 0 builds once only')
-
     # optimization
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
     parser.add_argument('--itr', type=int, default=1, help='experiments times')
@@ -174,56 +131,42 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.phase:
         args.model = 'PIBR'
-    if args.cycle is not None:
-        args.period_len = args.cycle
     if args.random_seed is not None:
         args.seed = args.random_seed
-    if args.period_len <= 0:
-        raise ValueError('--period_len must be positive')
-    if args.idea_block_radius < 0:
-        raise ValueError('--idea_block_radius must be non-negative')
-    if args.idea_block_cycles <= 0:
-        raise ValueError('--idea_block_cycles must be positive')
-    if args.topm <= 0:
-        raise ValueError('--topm must be positive')
-    if args.temperature <= 0:
-        raise ValueError('--temperature must be positive')
-    if args.value_anchor not in ['phase', 'last']:
-        raise ValueError("--value-anchor must be 'phase' or 'last'")
-    if args.retrieval_target not in ['future', 'error']:
-        raise ValueError("--retrieval-target must be 'future' or 'error'")
-    if args.fusion_mode not in ['linear', 'gate', 'none']:
-        raise ValueError("--fusion-mode must be 'linear', 'gate', or 'none'")
-    if args.backbone_warmup_epochs < 0:
-        raise ValueError('--backbone-warmup-epochs must be non-negative')
-    if args.refresh_memory_every < 0:
-        raise ValueError('--refresh-memory-every must be non-negative')
-    args.des = '{}_pibr_P{}_r{}_cyc{}_k{}'.format(
-        args.des,
-        args.period_len,
-        args.idea_block_radius,
-        args.idea_block_cycles,
-        args.topm,
+    period_by_data = {
+        'ETTh1': 24,
+        'ETTh2': 24,
+        'ETTm1': 96,
+        'ETTm2': 96,
+        'PEMS': 288,
+        'Solar': 144,
+        'electricity': 168,
+        'traffic': 168,
+        'weather': 144,
+    }
+    period_by_freq = {
+        'h': 24,
+        't': 96,
+        '15min': 96,
+        '10min': 144,
+        '5min': 288,
+        'd': 7,
+    }
+    data_path_name = os.path.basename(args.data_path).lower()
+    period_by_path = {
+        'electricity.csv': 168,
+        'traffic.csv': 168,
+        'weather.csv': 144,
+    }
+    args.period_len = period_by_data.get(
+        args.data,
+        period_by_path.get(data_path_name, period_by_freq.get(args.freq, 24)),
     )
-    args.des = '{}_t{}_v{}_f{}'.format(
-        args.des,
-        args.retrieval_target,
-        args.value_anchor,
-        args.fusion_mode,
-    )
-    if args.retrieval_target == 'error':
-        args.des = '{}_w{}_rf{}'.format(
-            args.des,
-            args.backbone_warmup_epochs,
-            args.refresh_memory_every,
-        )
-    if args.fusion_mode == 'gate':
-        args.des = '{}_g{}'.format(
-            args.des,
-            str(args.retrieval_gate_init).replace('.', 'p').replace('-', 'm'),
-        )
-    if args.horizon_wise_phase:
-        args.des = '{}_hwp'.format(args.des)
+    args.idea_block_radius = 1
+    args.idea_block_cycles = 4
+    args.topm = 20
+    args.temperature = 0.1
+    args.des = '{}_pibr'.format(args.des)
 
     fix_seed = args.seed
     random.seed(fix_seed)

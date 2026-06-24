@@ -12,20 +12,18 @@ and flattening that phase-aligned local block:
 
 ```
 Key   = Phase-aligned IdeaBlock(p, r)
-Value = backbone forecast error on a similar historical block
+Value = true future residual after the input window
 ```
 
-The default training flow first warms up the backbone, then refreshes the
-retrieval memory with the backbone's training-set residuals:
+In code, the memory stores the offset-normalized future trend:
 
 ```
-Value[h] = true_future[h] - backbone(input)[h]
+Value = future - last_observed
 ```
 
 At prediction time, the current input is converted into the same IdeaBlock
-query, the model retrieves similar historical errors, aggregates them, and
-adds the retrieved correction to the backbone forecast. The older direct-future
-target is kept as an ablation through `--retrieval-target future`.
+query, the model retrieves similar historical keys, aggregates their future
+trends, and fuses the retrieved trend with the lookback prediction head.
 
 ## Components
 
@@ -34,9 +32,9 @@ target is kept as an ablation through `--retrieval-target future`.
 2. **IdeaBlock Construction**: build `Phase-aligned IdeaBlock(p, r)` from
    phases around `p` over previous cycles.
 3. **Key-Value Memory**: store IdeaBlock keys from the training set and their
-   backbone error values.
-4. **Error Retrieval Correction**: retrieve historical backbone errors and add
-   them to the current backbone forecast.
+   future residual values.
+4. **Future Retrieval Fusion**: retrieve and aggregate future residuals, then
+   fuse them with the backbone forecast.
 
 ## Usage
 
@@ -64,36 +62,19 @@ python3 run.py \
   --features M \
   --seq_len 336 \
   --pred_len 96 \
-  --enc_in 7 \
-  --period_len 24 \
-  --idea_block_radius 1 \
-  --idea_block_cycles 4 \
-  --topm 20 \
-  --retrieval-target error \
-  --backbone-warmup-epochs 5 \
-  --refresh-memory-every 1
+  --enc_in 7
 ```
 
-Core retrieval parameters:
+PIBR baseline settings are fixed internally:
 
 ```
---period_len P          # cycle length used for phase alignment
---idea_block_radius r   # local phase neighborhood radius
---idea_block_cycles N   # number of previous cycles in each key
---topm K                # retrieved neighbors
---temperature T         # softmax temperature for retrieved future aggregation
---retrieval-target error  # default: retrieve backbone residual errors
---backbone-warmup-epochs N # backbone-only epochs before building error memory
---refresh-memory-every N   # refresh error memory after warmup; 0 builds once only
---retrieval-target future  # ablation: retrieve direct future residuals
---value-anchor phase    # store Value as future minus same-phase historical anchor
---value-anchor last     # ablation: store Value as future minus last observed point
---fusion-mode linear    # baseline-initialized linear fusion over backbone/retrieval
---fusion-mode gate      # sigmoid-gated residual retrieval fusion
---fusion-mode none      # backbone-only ablation
---retrieval-gate-init X # initial gate logit when --fusion-mode gate
---horizon-wise-phase    # retrieve each horizon step from its own future phase
+phase_radius = 1
+idea_block_cycles = 4
+topm = 20
+temperature = 0.1
 ```
+
+The period length `P` is inferred from the dataset or data file name.
 
 `-Phase` is accepted as a compatibility flag, but `PIBR` always uses
 Phase-aligned IdeaBlock Retrieval.

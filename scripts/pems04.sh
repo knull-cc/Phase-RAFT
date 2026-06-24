@@ -23,7 +23,6 @@ do
       --seq_len $seq_len \
       --pred_len $pred_len \
       --enc_in 307 \
-      --period_len 288 \
       --train_epochs 30 \
       --patience 5 \
       --itr 1 --batch_size 32 --learning_rate 0.003 --random_seed $random_seed \

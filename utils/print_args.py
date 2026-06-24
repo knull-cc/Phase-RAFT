@@ -40,14 +40,10 @@ def print_args(args):
     print(f'  {"Output Attention:":<20}{args.output_attention:<20}')
     print()
 
-    print("\033[1m" + "IdeaBlock Retrieval Parameters" + "\033[0m")
+    print("\033[1m" + "PIBR Baseline Config" + "\033[0m")
     print(f'  {"Period P:":<20}{args.period_len:<20}{"Radius r:":<20}{args.idea_block_radius:<20}')
     print(f'  {"Cycles:":<20}{args.idea_block_cycles:<20}{"Top-k:":<20}{args.topm:<20}')
-    print(f'  {"Temperature:":<20}{args.temperature:<20}{"Horizon-wise:":<20}{args.horizon_wise_phase:<20}')
-    print(f'  {"Target:":<20}{args.retrieval_target:<20}{"Value Anchor:":<20}{args.value_anchor:<20}')
-    print(f'  {"Fusion:":<20}{args.fusion_mode:<20}{"Warmup Epochs:":<20}{args.backbone_warmup_epochs:<20}')
-    print(f'  {"Refresh Every:":<20}{args.refresh_memory_every:<20}')
-    print(f'  {"Gate Init:":<20}{args.retrieval_gate_init:<20}')
+    print(f'  {"Temperature:":<20}{args.temperature:<20}')
     print()
 
     print("\033[1m" + "Run Parameters" + "\033[0m")

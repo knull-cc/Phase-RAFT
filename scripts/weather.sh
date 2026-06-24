@@ -22,7 +22,6 @@ do
       --seq_len $seq_len \
       --pred_len $pred_len \
       --enc_in 21 \
-      --period_len 144 \
       --train_epochs 30 \
       --patience 5 \
       --dropout 0.5 \

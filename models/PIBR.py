@@ -24,23 +24,7 @@ class Model(nn.Module):
         self.channels = configs.enc_in
 
         self.linear_x = nn.Linear(self.seq_len, self.pred_len)
-        self.retrieval_target = getattr(configs, 'retrieval_target', 'error')
-        if self.retrieval_target not in ['future', 'error']:
-            raise ValueError("retrieval_target must be 'future' or 'error'")
-        self.retrieval_enabled = self.retrieval_target != 'error'
-
-        self.fusion_mode = getattr(configs, 'fusion_mode', 'linear')
-        if self.fusion_mode not in ['linear', 'gate', 'none']:
-            raise ValueError("fusion_mode must be 'linear', 'gate', or 'none'")
-
-        if self.retrieval_target == 'future' and self.fusion_mode == 'linear':
-            self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
-            self._init_linear_fusion()
-        elif self.retrieval_target == 'future' and self.fusion_mode == 'gate':
-            gate_init = float(getattr(configs, 'retrieval_gate_init', -2.0))
-            self.retrieval_gate_logit = nn.Parameter(
-                torch.full((1, self.pred_len, self.channels), gate_init)
-            )
+        self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
 
         self.retriever = PhaseAlignedIdeaBlockRetrieval(
             seq_len=self.seq_len,
@@ -51,23 +35,8 @@ class Model(nn.Module):
             num_cycles=configs.idea_block_cycles,
             topk=configs.topm,
             temperature=configs.temperature,
-            horizon_wise_phase=getattr(configs, 'horizon_wise_phase', False),
-            value_anchor=getattr(configs, 'value_anchor', 'phase'),
         )
         self.data_borders = {}
-
-    def _init_linear_fusion(self):
-        with torch.no_grad():
-            self.linear_pred.weight.zero_()
-            self.linear_pred.bias.zero_()
-            eye = torch.eye(self.pred_len)
-            self.linear_pred.weight[:, :self.pred_len].copy_(eye)
-
-    def set_retrieval_enabled(self, enabled):
-        self.retrieval_enabled = bool(enabled)
-
-    def set_memory_values(self, values):
-        self.retriever.set_values(values)
 
     def prepare_dataset(self, train_data, valid_data=None, test_data=None):
         self.retriever.prepare_dataset(train_data)
@@ -77,12 +46,6 @@ class Model(nn.Module):
             'test': int(getattr(test_data, 'border1', 0)) if test_data is not None else 0,
         }
 
-    def backbone_forecast(self, x):
-        x_offset = x[:, -1:, :].detach()
-        x_norm = x - x_offset
-        lookback_trend = self.linear_x(x_norm.permute(0, 2, 1)).permute(0, 2, 1)
-        return lookback_trend + x_offset
-
     def encoder(self, x, index, mode):
         bsz, seq_len, channels = x.shape
         if seq_len != self.seq_len or channels != self.channels:
@@ -91,33 +54,20 @@ class Model(nn.Module):
         border = self.data_borders.get(mode, 0)
         index_abs = index.to(x.device).long() + int(border)
 
-        backbone_pred = self.backbone_forecast(x)
+        x_offset = x[:, -1:, :].detach()
+        x_norm = x - x_offset
+        lookback_trend = self.linear_x(x_norm.permute(0, 2, 1)).permute(0, 2, 1)
 
-        if not self.retrieval_enabled or self.fusion_mode == 'none':
-            return backbone_pred.reshape(bsz, self.pred_len, self.channels)
-
-        if self.retrieval_target == 'error':
-            correction = self.retriever.retrieve_values(
-                x,
-                index_abs=index_abs,
-                train=mode == 'train',
-            )
-            return (backbone_pred + correction).reshape(bsz, self.pred_len, self.channels)
-
-        retrieved_future = self.retriever.retrieve(
+        retrieved_trend = self.retriever.retrieve(
             x,
             index_abs=index_abs,
             train=mode == 'train',
         )
 
-        if self.fusion_mode == 'gate':
-            gate = torch.sigmoid(self.retrieval_gate_logit).to(dtype=x.dtype)
-            pred = backbone_pred + gate * (retrieved_future - backbone_pred)
-            return pred.reshape(bsz, self.pred_len, self.channels)
-
-        pred = torch.cat([backbone_pred, retrieved_future], dim=1)
+        pred = torch.cat([lookback_trend, retrieved_trend], dim=1)
         pred = self.linear_pred(pred.permute(0, 2, 1)).permute(0, 2, 1)
-        return pred.reshape(bsz, self.pred_len, self.channels)
+        pred = pred.reshape(bsz, self.pred_len, self.channels)
+        return pred + x_offset
 
     def forecast(self, x_enc, index, mode):
         return self.encoder(x_enc, index, mode)

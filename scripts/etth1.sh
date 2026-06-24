@@ -22,7 +22,6 @@ do
       --seq_len $seq_len \
       --pred_len $pred_len \
       --enc_in 7 \
-      --period_len 24 \
       --train_epochs 30 \
       --patience 5 \
       --dropout 0.5 \
@@ -30,4 +29,3 @@ do
       $extra_args
 done
 done
-
