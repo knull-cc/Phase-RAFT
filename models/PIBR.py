@@ -24,10 +24,18 @@ class Model(nn.Module):
         self.channels = configs.enc_in
 
         self.linear_x = nn.Linear(self.seq_len, self.pred_len)
-        gate_init = float(getattr(configs, 'retrieval_gate_init', -2.0))
-        self.retrieval_gate_logit = nn.Parameter(
-            torch.full((1, self.pred_len, self.channels), gate_init)
-        )
+        self.fusion_mode = getattr(configs, 'fusion_mode', 'linear')
+        if self.fusion_mode not in ['linear', 'gate', 'none']:
+            raise ValueError("fusion_mode must be 'linear', 'gate', or 'none'")
+
+        if self.fusion_mode == 'linear':
+            self.linear_pred = nn.Linear(2 * self.pred_len, self.pred_len)
+            self._init_linear_fusion()
+        elif self.fusion_mode == 'gate':
+            gate_init = float(getattr(configs, 'retrieval_gate_init', -2.0))
+            self.retrieval_gate_logit = nn.Parameter(
+                torch.full((1, self.pred_len, self.channels), gate_init)
+            )
 
         self.retriever = PhaseAlignedIdeaBlockRetrieval(
             seq_len=self.seq_len,
@@ -42,6 +50,13 @@ class Model(nn.Module):
             value_anchor=getattr(configs, 'value_anchor', 'phase'),
         )
         self.data_borders = {}
+
+    def _init_linear_fusion(self):
+        with torch.no_grad():
+            self.linear_pred.weight.zero_()
+            self.linear_pred.bias.zero_()
+            eye = torch.eye(self.pred_len)
+            self.linear_pred.weight[:, :self.pred_len].copy_(eye)
 
     def prepare_dataset(self, train_data, valid_data=None, test_data=None):
         self.retriever.prepare_dataset(train_data)
@@ -70,8 +85,16 @@ class Model(nn.Module):
             train=mode == 'train',
         )
 
-        gate = torch.sigmoid(self.retrieval_gate_logit).to(dtype=x.dtype)
-        pred = backbone_pred + gate * (retrieved_future - backbone_pred)
+        if self.fusion_mode == 'none':
+            return backbone_pred.reshape(bsz, self.pred_len, self.channels)
+
+        if self.fusion_mode == 'gate':
+            gate = torch.sigmoid(self.retrieval_gate_logit).to(dtype=x.dtype)
+            pred = backbone_pred + gate * (retrieved_future - backbone_pred)
+            return pred.reshape(bsz, self.pred_len, self.channels)
+
+        pred = torch.cat([backbone_pred, retrieved_future], dim=1)
+        pred = self.linear_pred(pred.permute(0, 2, 1)).permute(0, 2, 1)
         return pred.reshape(bsz, self.pred_len, self.channels)
 
     def forecast(self, x_enc, index, mode):

@@ -107,9 +107,12 @@ if __name__ == '__main__':
     parser.add_argument('--value-anchor', '--value_anchor', type=str, default='phase',
                         choices=['phase', 'last'], dest='value_anchor',
                         help='anchor used for retrieved Value residuals')
+    parser.add_argument('--fusion-mode', '--fusion_mode', type=str, default='linear',
+                        choices=['linear', 'gate', 'none'], dest='fusion_mode',
+                        help='how retrieved futures are fused with the backbone forecast')
     parser.add_argument('--retrieval-gate-init', '--retrieval_gate_init',
                         type=float, default=-2.0, dest='retrieval_gate_init',
-                        help='initial logit for residual retrieval fusion gate')
+                        help='initial logit for residual retrieval fusion gate when --fusion-mode gate')
 
     # optimization
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
@@ -178,6 +181,8 @@ if __name__ == '__main__':
         raise ValueError('--temperature must be positive')
     if args.value_anchor not in ['phase', 'last']:
         raise ValueError("--value-anchor must be 'phase' or 'last'")
+    if args.fusion_mode not in ['linear', 'gate', 'none']:
+        raise ValueError("--fusion-mode must be 'linear', 'gate', or 'none'")
     args.des = '{}_pibr_P{}_r{}_cyc{}_k{}'.format(
         args.des,
         args.period_len,
@@ -185,11 +190,16 @@ if __name__ == '__main__':
         args.idea_block_cycles,
         args.topm,
     )
-    args.des = '{}_v{}_g{}'.format(
+    args.des = '{}_v{}_f{}'.format(
         args.des,
         args.value_anchor,
-        str(args.retrieval_gate_init).replace('.', 'p').replace('-', 'm'),
+        args.fusion_mode,
     )
+    if args.fusion_mode == 'gate':
+        args.des = '{}_g{}'.format(
+            args.des,
+            str(args.retrieval_gate_init).replace('.', 'p').replace('-', 'm'),
+        )
     if args.horizon_wise_phase:
         args.des = '{}_hwp'.format(args.des)
 

@@ -70,7 +70,8 @@ python3 run.py \
   --idea_block_radius 1 \
   --idea_block_cycles 4 \
   --topm 20 \
-  --value-anchor phase
+  --value-anchor phase \
+  --fusion-mode linear
 ```
 
 Core retrieval parameters:
@@ -83,7 +84,10 @@ Core retrieval parameters:
 --temperature T         # softmax temperature for retrieved future aggregation
 --value-anchor phase    # store Value as future minus same-phase historical anchor
 --value-anchor last     # ablation: store Value as future minus last observed point
---retrieval-gate-init X # initial logit for residual retrieval fusion gate
+--fusion-mode linear    # baseline-initialized linear fusion over backbone/retrieval
+--fusion-mode gate      # sigmoid-gated residual retrieval fusion
+--fusion-mode none      # backbone-only ablation
+--retrieval-gate-init X # initial gate logit when --fusion-mode gate
 --horizon-wise-phase    # retrieve each horizon step from its own future phase
 ```
 
