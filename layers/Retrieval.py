@@ -7,8 +7,9 @@ class PhaseAlignedIdeaBlockRetrieval:
 
     Each memory key is built from the observed lookback window by selecting
     values whose absolute phases fall in ``[p-r, p+r]`` around a center phase
-    ``p``. For forecasting, ``p`` is the last observed phase, and values are
-    the true future sequence after that input window.
+    ``p``. Values are stored as future residuals against either the last
+    observed point or the latest observed point with the same phase as each
+    future horizon.
     """
 
     def __init__(
@@ -22,6 +23,7 @@ class PhaseAlignedIdeaBlockRetrieval:
         topk=20,
         temperature=0.1,
         horizon_wise_phase=False,
+        value_anchor='phase',
         eps=1e-6,
     ):
         if period_len <= 0:
@@ -34,6 +36,8 @@ class PhaseAlignedIdeaBlockRetrieval:
             raise ValueError('topk must be positive')
         if temperature <= 0:
             raise ValueError('temperature must be positive')
+        if value_anchor not in ['phase', 'last']:
+            raise ValueError("value_anchor must be 'phase' or 'last'")
 
         self.seq_len = seq_len
         self.pred_len = pred_len
@@ -44,6 +48,7 @@ class PhaseAlignedIdeaBlockRetrieval:
         self.topk = topk
         self.temperature = temperature
         self.horizon_wise_phase = horizon_wise_phase
+        self.value_anchor = value_anchor
         self.eps = eps
 
         self.keys = None
@@ -85,8 +90,11 @@ class PhaseAlignedIdeaBlockRetrieval:
                     ).squeeze(0)
                     phase_key_chunks[phase].append(phase_key.cpu())
             future = torch.as_tensor(seq_y[-self.pred_len:], dtype=torch.float32)
-            last_observed = torch.as_tensor(seq_x[-1:], dtype=torch.float32)
-            values.append(future - last_observed)
+            anchors = self.make_future_anchors(
+                x,
+                torch.tensor([index_abs], dtype=torch.long),
+            ).squeeze(0)
+            values.append(future - anchors)
             abs_indices.append(index_abs)
 
         if not keys:
@@ -106,7 +114,8 @@ class PhaseAlignedIdeaBlockRetrieval:
         print(
             'Phase-aligned IdeaBlock memory: '
             f'{self.n_train} keys, P={self.period_len}, '
-            f'r={self.phase_radius}, cycles={self.num_cycles}, mode={mode}'
+            f'r={self.phase_radius}, cycles={self.num_cycles}, '
+            f'mode={mode}, value_anchor={self.value_anchor}'
         )
 
     def make_keys(self, x, index_abs, horizon_offset=None):
@@ -162,6 +171,31 @@ class PhaseAlignedIdeaBlockRetrieval:
         key = torch.cat([block, mask], dim=1)
         key = key - key.mean(dim=1, keepdim=True)
         return F.normalize(key, dim=1, eps=self.eps)
+
+    def make_future_anchors(self, x, index_abs):
+        """Return the observed anchor used to express each future horizon."""
+
+        x = x.float()
+        bsz, length, channels = x.shape
+        if length != self.seq_len or channels != self.channels:
+            raise ValueError('IdeaBlock input shape does not match configured seq_len/channels')
+
+        if self.value_anchor == 'last':
+            return x[:, -1:, :].expand(-1, self.pred_len, -1)
+
+        index_abs = index_abs.to(x.device).long()
+        horizons = torch.arange(self.pred_len, device=x.device, dtype=torch.long)
+        future_phase = (index_abs[:, None] + self.seq_len + horizons[None, :]) % self.period_len
+        end_phase = (index_abs + self.seq_len - 1) % self.period_len
+        steps_back = (end_phase[:, None] - future_phase) % self.period_len
+        rel_pos = self.seq_len - 1 - steps_back
+        valid = rel_pos >= 0
+
+        gather_pos = rel_pos.clamp(0, self.seq_len - 1)
+        gather_index = gather_pos[:, :, None].expand(-1, -1, channels)
+        anchors = torch.gather(x, dim=1, index=gather_index)
+        last_observed = x[:, -1:, :].expand(-1, self.pred_len, -1)
+        return torch.where(valid[:, :, None], anchors, last_observed)
 
     def _clear_device_cache(self):
         self._keys_cache = None
@@ -224,7 +258,8 @@ class PhaseAlignedIdeaBlockRetrieval:
         weights = F.softmax(top_sim / self.temperature, dim=1)
 
         values = self._values_on(x.device, x.dtype)
-        return (weights[:, :, None, None] * values[top_idx]).sum(dim=1)
+        residual = (weights[:, :, None, None] * values[top_idx]).sum(dim=1)
+        return self.make_future_anchors(x, index_abs).to(dtype=x.dtype) + residual
 
     def _retrieve_horizon_wise(self, x, index_abs, train=False):
         if self.phase_keys is None:
@@ -307,7 +342,7 @@ class PhaseAlignedIdeaBlockRetrieval:
                 chunk_weights[:, :, :, None] * gathered_values
             ).sum(dim=2)
 
-        return retrieved
+        return self.make_future_anchors(x, index_abs).to(dtype=x.dtype) + retrieved
 
     def _mask_self_overlap(self, sim, query_abs_index):
         train_abs = self._train_abs_on(sim.device)
@@ -324,6 +359,7 @@ class PhaseAlignedIdeaBlockRetrieval:
             'period_len': self.period_len,
             'phase_radius': self.phase_radius,
             'num_cycles': self.num_cycles,
+            'value_anchor': self.value_anchor,
             'relative_phases': phases,
             'key_slots': self.num_cycles * self.block_width,
         }

@@ -12,16 +12,21 @@ and flattening that phase-aligned local block:
 
 ```
 Key   = Phase-aligned IdeaBlock(p, r)
-Value = the true future after the input window
+Value = future residual after phase-aligned anchoring
 ```
 
-In code, the memory stores the offset-normalized future trend
-`future - last_observed` and adds the current sample's `last_observed` back
-after retrieval. This keeps Key and Value in the same local coordinate system.
+In code, the memory stores the phase-anchored future residual. For each future
+horizon `h`, the anchor is the latest observed point whose phase matches that
+future timestamp:
+
+```
+Value[h] = future[h] - observed_same_phase_anchor[h]
+```
 
 At prediction time, the current input is converted into the same IdeaBlock
-query, the model retrieves similar historical keys, aggregates their future
-trends, and fuses the retrieved trend with the lookback prediction head.
+query, the model retrieves similar historical keys, aggregates their anchored
+future residuals, adds the current sample's same-phase anchor back, and fuses
+the retrieved future with the lookback prediction through a residual gate.
 
 ## Components
 
@@ -30,9 +35,9 @@ trends, and fuses the retrieved trend with the lookback prediction head.
 2. **IdeaBlock Construction**: build `Phase-aligned IdeaBlock(p, r)` from
    phases around `p` over previous cycles.
 3. **Key-Value Memory**: store IdeaBlock keys from the training set and their
-   true future values.
-4. **Future Retrieval Fusion**: retrieve and aggregate futures, then fuse them
-   with the backbone forecast.
+   phase-anchored future residual values.
+4. **Future Retrieval Fusion**: retrieve anchored futures, then blend them with
+   the backbone forecast through a trainable residual gate.
 
 ## Usage
 
@@ -64,7 +69,8 @@ python3 run.py \
   --period_len 24 \
   --idea_block_radius 1 \
   --idea_block_cycles 4 \
-  --topm 20
+  --topm 20 \
+  --value-anchor phase
 ```
 
 Core retrieval parameters:
@@ -75,6 +81,9 @@ Core retrieval parameters:
 --idea_block_cycles N   # number of previous cycles in each key
 --topm K                # retrieved neighbors
 --temperature T         # softmax temperature for retrieved future aggregation
+--value-anchor phase    # store Value as future minus same-phase historical anchor
+--value-anchor last     # ablation: store Value as future minus last observed point
+--retrieval-gate-init X # initial logit for residual retrieval fusion gate
 --horizon-wise-phase    # retrieve each horizon step from its own future phase
 ```
 

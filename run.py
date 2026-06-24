@@ -104,6 +104,12 @@ if __name__ == '__main__':
     parser.add_argument('--horizon-wise-phase', '--horizon_wise_phase',
                         action='store_true', dest='horizon_wise_phase', default=False,
                         help='retrieve each forecast horizon from its own future phase query')
+    parser.add_argument('--value-anchor', '--value_anchor', type=str, default='phase',
+                        choices=['phase', 'last'], dest='value_anchor',
+                        help='anchor used for retrieved Value residuals')
+    parser.add_argument('--retrieval-gate-init', '--retrieval_gate_init',
+                        type=float, default=-2.0, dest='retrieval_gate_init',
+                        help='initial logit for residual retrieval fusion gate')
 
     # optimization
     parser.add_argument('--num_workers', type=int, default=10, help='data loader num workers')
@@ -170,12 +176,19 @@ if __name__ == '__main__':
         raise ValueError('--topm must be positive')
     if args.temperature <= 0:
         raise ValueError('--temperature must be positive')
+    if args.value_anchor not in ['phase', 'last']:
+        raise ValueError("--value-anchor must be 'phase' or 'last'")
     args.des = '{}_pibr_P{}_r{}_cyc{}_k{}'.format(
         args.des,
         args.period_len,
         args.idea_block_radius,
         args.idea_block_cycles,
         args.topm,
+    )
+    args.des = '{}_v{}_g{}'.format(
+        args.des,
+        args.value_anchor,
+        str(args.retrieval_gate_init).replace('.', 'p').replace('-', 'm'),
     )
     if args.horizon_wise_phase:
         args.des = '{}_hwp'.format(args.des)
