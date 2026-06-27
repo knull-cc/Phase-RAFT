@@ -22,6 +22,7 @@ python -u run.py \
   --enc_in 7 \
   --train_epochs 30 \
   --patience 5 \
+  --lradj none \
   --dropout 0.1 \
   --itr 1 --batch_size 32 --learning_rate 0.0001 --random_seed $random_seed \
   $extra_args
@@ -42,6 +43,7 @@ python -u run.py \
   --enc_in 7 \
   --train_epochs 30 \
   --patience 5 \
+  --lradj none \
   --dropout 0.1 \
   --itr 1 --batch_size 32 --learning_rate 0.0001 --random_seed $random_seed \
   $extra_args
@@ -62,6 +64,7 @@ python -u run.py \
   --enc_in 7 \
   --train_epochs 30 \
   --patience 5 \
+  --lradj none \
   --dropout 0.1 \
   --itr 1 --batch_size 32 --learning_rate 0.0001 --random_seed $random_seed \
   $extra_args
