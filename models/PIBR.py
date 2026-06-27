@@ -16,6 +16,7 @@ class Model(nn.Module):
         self.pred_len = configs.pred_len
         self.channels = configs.enc_in
         self.host_name = getattr(configs, 'pibr_host', 'Linear')
+        self.fusion = configs.pibr_fusion
 
         host_module = importlib.import_module(f'models.{self.host_name}')
         self.host = host_module.Model(configs)
@@ -28,6 +29,10 @@ class Model(nn.Module):
             num_cycles=configs.idea_block_cycles,
             topk=configs.topm,
             temperature=configs.temperature,
+            fusion=configs.pibr_fusion,
+            projector=configs.pibr_projector,
+            gate_init_bias=configs.pibr_gate_init_bias,
+            residual_scale=configs.pibr_residual_scale,
         )
         self.data_borders = {}
 
@@ -49,11 +54,26 @@ class Model(nn.Module):
         if seq_len != self.seq_len or channels != self.channels:
             raise ValueError('PIBR input shape does not match configured seq_len/channels')
 
-        base = self._host_forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
         border = self.data_borders.get(mode, 0)
         index_abs = index.to(x_enc.device).long() + int(border)
-        residual, _ = self.phase_adapter(x_enc, index_abs=index_abs, train=mode == 'train')
-        return base[:, -self.pred_len:, :] + residual
+
+        if self.fusion == 'phase_only':
+            pred, _ = self.phase_adapter(
+                x_enc,
+                index_abs=index_abs,
+                base_forecast=None,
+                train=mode == 'train',
+            )
+            return pred[:, -self.pred_len:, :]
+
+        base = self._host_forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
+        pred, _ = self.phase_adapter(
+            x_enc,
+            index_abs=index_abs,
+            base_forecast=base[:, -self.pred_len:, :],
+            train=mode == 'train',
+        )
+        return pred
 
     def forward(
         self,

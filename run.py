@@ -138,6 +138,16 @@ if __name__ == '__main__':
     parser.add_argument('--idea_block_cycles', type=int, default=4, help='number of previous cycles in each key')
     parser.add_argument('--topm', type=int, default=20, help='top-k memory entries for phase retrieval')
     parser.add_argument('--temperature', type=float, default=0.1, help='retrieval softmax temperature')
+    parser.add_argument('--pibr_fusion', type=str, default='phase_only',
+                        choices=['phase_only', 'fixed_avg', 'residual_add', 'learned_gate'],
+                        help='PIBR hypothesis-test fusion mode')
+    parser.add_argument('--pibr_projector', type=str, default='identity',
+                        choices=['identity', 'linear'],
+                        help='projection applied to retrieved residual; identity is the strict hypothesis test')
+    parser.add_argument('--pibr_gate_init_bias', type=float, default=-4.0,
+                        help='initial gate bias used only by --pibr_fusion learned_gate')
+    parser.add_argument('--pibr_residual_scale', type=float, default=1.0,
+                        help='scale used by residual_add and learned_gate fusion modes')
 
     args = parser.parse_args()
     if args.phase:
@@ -175,7 +185,7 @@ if __name__ == '__main__':
             period_by_path.get(data_path_name, period_by_freq.get(args.freq, 24)),
         )
     if args.model == 'PIBR':
-        args.des = '{}_pibr_{}'.format(args.des, args.pibr_host)
+        args.des = '{}_pibr_{}_{}_{}'.format(args.des, args.pibr_host, args.pibr_fusion, args.pibr_projector)
 
     fix_seed = args.seed
     random.seed(fix_seed)
