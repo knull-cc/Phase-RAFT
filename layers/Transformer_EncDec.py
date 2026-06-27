@@ -25,7 +25,8 @@ class EncoderLayer(nn.Module):
         new_x, attn = self.attention(x, x, x, attn_mask=attn_mask)
         x = x + self.dropout(new_x)
 
-        y = self.norm1(x)
+        x = self.norm1(x)
+        y = x
         y = self.dropout(self.activation(self.conv1(y.transpose(-1, 1))))
         y = self.dropout(self.conv2(y).transpose(-1, 1))
         return self.norm2(x + y), attn
