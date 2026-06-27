@@ -15,7 +15,10 @@ if __name__ == '__main__':
     parser.add_argument('--is_training', type=int, default=1, help='status')
     parser.add_argument('--model_id', type=str, default='temp', help='model id')
     parser.add_argument('--model', type=str, default='PIBR',
-                        help='model name, options: [PIBR]')
+                        help='model name, options: [Linear, DLinear, NLinear, iTransformer, PIBR]')
+    parser.add_argument('--pibr_host', type=str, default='Linear',
+                        choices=['Linear', 'DLinear', 'NLinear', 'iTransformer'],
+                        help='host model wrapped by PIBR')
     parser.add_argument('-Phase', '--Phase', '--phase', action='store_true', dest='phase',
                         help='compatibility flag; PIBR always uses Phase-aligned IdeaBlock Retrieval')
 
@@ -36,6 +39,8 @@ if __name__ == '__main__':
     parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length')
     parser.add_argument('--seasonal_patterns', type=str, default='Monthly', help='subset for M4')
     parser.add_argument('--inverse', action='store_true', help='inverse output data', default=False)
+    parser.add_argument('--period_len', type=int, default=None,
+                        help='period length for phase-aligned retrieval; inferred when omitted')
 
     # inputation task
     parser.add_argument('--mask_rate', type=float, default=0.25, help='mask ratio')
@@ -70,6 +75,8 @@ if __name__ == '__main__':
     parser.add_argument('--decomp_method', type=str, default='moving_avg',
                         help='method of series decompsition, only support moving_avg or dft_decomp')
     parser.add_argument('--use_norm', type=int, default=1, help='whether to use normalize; True 1 False 0')
+    parser.add_argument('--use_revin', type=int, default=1, help='whether to use RevIN-style normalization')
+    parser.add_argument('--individual', action='store_true', help='use individual linear heads for DLinear/NLinear')
     parser.add_argument('--down_sampling_layers', type=int, default=0, help='num of down sampling layers')
     parser.add_argument('--down_sampling_window', type=int, default=1, help='down sampling window size')
     parser.add_argument('--down_sampling_method', type=str, default=None,
@@ -127,6 +134,10 @@ if __name__ == '__main__':
     parser.add_argument('--discdtw', default=False, action="store_true", help="Discrimitive DTW warp preset augmentation")
     parser.add_argument('--discsdtw', default=False, action="store_true", help="Discrimitive shapeDTW warp preset augmentation")
     parser.add_argument('--extra_tag', type=str, default="", help="Anything extra")
+    parser.add_argument('--idea_block_radius', type=int, default=1, help='phase neighborhood radius')
+    parser.add_argument('--idea_block_cycles', type=int, default=4, help='number of previous cycles in each key')
+    parser.add_argument('--topm', type=int, default=20, help='top-k memory entries for phase retrieval')
+    parser.add_argument('--temperature', type=float, default=0.1, help='retrieval softmax temperature')
 
     args = parser.parse_args()
     if args.phase:
@@ -158,15 +169,13 @@ if __name__ == '__main__':
         'traffic.csv': 168,
         'weather.csv': 144,
     }
-    args.period_len = period_by_data.get(
-        args.data,
-        period_by_path.get(data_path_name, period_by_freq.get(args.freq, 24)),
-    )
-    args.idea_block_radius = 1
-    args.idea_block_cycles = 4
-    args.topm = 20
-    args.temperature = 0.1
-    args.des = '{}_pibr'.format(args.des)
+    if args.period_len is None:
+        args.period_len = period_by_data.get(
+            args.data,
+            period_by_path.get(data_path_name, period_by_freq.get(args.freq, 24)),
+        )
+    if args.model == 'PIBR':
+        args.des = '{}_pibr_{}'.format(args.des, args.pibr_host)
 
     fix_seed = args.seed
     random.seed(fix_seed)

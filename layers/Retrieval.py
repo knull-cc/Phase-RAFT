@@ -158,7 +158,7 @@ class PhaseAlignedIdeaBlockRetrieval:
             self._train_abs_cache_device = device
         return self._train_abs_cache
 
-    def retrieve(self, x, index_abs, train=False):
+    def retrieve(self, x, index_abs, train=False, return_info=False):
         if self.keys is None or self.values is None:
             raise RuntimeError('IdeaBlock memory has not been prepared')
 
@@ -174,7 +174,22 @@ class PhaseAlignedIdeaBlockRetrieval:
         weights = F.softmax(top_sim / self.temperature, dim=1)
 
         values = self._values_on(x.device, x.dtype)
-        return (weights[:, :, None, None] * values[top_idx]).sum(dim=1)
+        retrieved = (weights[:, :, None, None] * values[top_idx]).sum(dim=1)
+        if not return_info:
+            return retrieved
+
+        log_k = torch.log(torch.tensor(float(k), device=x.device, dtype=x.dtype)).clamp_min(self.eps)
+        entropy = -(weights * torch.log(weights.clamp_min(self.eps))).sum(dim=1, keepdim=True) / log_k
+        top1 = top_sim[:, :1]
+        mean_sim = top_sim.mean(dim=1, keepdim=True)
+        info = {
+            'top1_sim': top1.to(dtype=x.dtype),
+            'mean_sim': mean_sim.to(dtype=x.dtype),
+            'sim_gap': (top1 - mean_sim).to(dtype=x.dtype),
+            'weight_entropy': entropy.to(dtype=x.dtype),
+            'weight_max': weights.max(dim=1, keepdim=True).values.to(dtype=x.dtype),
+        }
+        return retrieved, info
 
     def _mask_self_overlap(self, sim, query_abs_index):
         train_abs = self._train_abs_on(sim.device)

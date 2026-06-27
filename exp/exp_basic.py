@@ -1,13 +1,17 @@
 import os
 import torch
-from models import PIBR
+from models import DLinear, Linear, NLinear, PIBR, iTransformer
 
 
 class Exp_Basic(object):
     def __init__(self, args):
         self.args = args
         self.model_dict = {
+            'DLinear': DLinear,
+            'Linear': Linear,
+            'NLinear': NLinear,
             'PIBR': PIBR,
+            'iTransformer': iTransformer,
         }
 
         self.device = self._acquire_device()

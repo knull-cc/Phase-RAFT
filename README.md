@@ -1,9 +1,10 @@
 # Phase-aligned IdeaBlock Retrieval
 
-This repository keeps a single forecasting idea:
+This repository studies one forecasting idea:
 
-**Phase-aligned IdeaBlock Retrieval** uses phase-aligned block-level Key-Value
-retrieval for long-term forecasting.
+**PIBR wraps a host forecasting model with phase-aligned IdeaBlock retrieval.**
+The default host is `Linear`, and stronger hosts such as `iTransformer` can be
+selected from `run.py` with `--pibr_host`.
 
 For a period length `P`, each query uses the last observed phase as the center
 phase `p` and a phase neighborhood radius `r`. The key is built by collecting
@@ -22,8 +23,9 @@ Value = future - last_observed
 ```
 
 At prediction time, the current input is converted into the same IdeaBlock
-query, the model retrieves similar historical keys, aggregates their future
-trends, and fuses the retrieved trend with the lookback prediction head.
+query. The model retrieves similar historical keys, aggregates their future
+trends, and injects them as a confidence-gated residual correction on top of
+the host model forecast.
 
 ## Components
 
@@ -33,8 +35,14 @@ trends, and fuses the retrieved trend with the lookback prediction head.
    phases around `p` over previous cycles.
 3. **Key-Value Memory**: store IdeaBlock keys from the training set and their
    future residual values.
-4. **Future Retrieval Fusion**: retrieve and aggregate future residuals, then
-   fuse them with the backbone forecast.
+4. **Phase Residual Adapter**: retrieve and aggregate future residuals, then
+   inject a learned, confidence-gated correction into a backbone forecast.
+
+## Models
+
+- `Linear`: default host baseline without phase retrieval.
+- `iTransformer`: stronger host baseline without phase retrieval.
+- `PIBR`: phase-aligned IdeaBlock retrieval wrapper around `--pibr_host`.
 
 ## Usage
 
@@ -50,6 +58,12 @@ Run a dataset script:
 sh run_main.sh
 ```
 
+Run the first plugin comparison:
+
+```
+sh scripts/etth1_plugin.sh
+```
+
 Run directly:
 
 ```
@@ -59,13 +73,29 @@ python3 run.py \
   --data_path ETTh1.csv \
   --model_id ETTh1_336_96 \
   --model PIBR \
+  --pibr_host iTransformer \
   --features M \
   --seq_len 336 \
   --pred_len 96 \
   --enc_in 7
 ```
 
-PIBR baseline settings are fixed internally:
+Compare the plugin against the same backbone without phase retrieval:
+
+```
+python3 run.py \
+  --data ETTh1 \
+  --root_path ./dataset/ETT-small \
+  --data_path ETTh1.csv \
+  --model_id ETTh1_336_96 \
+  --model iTransformer \
+  --features M \
+  --seq_len 336 \
+  --pred_len 96 \
+  --enc_in 7
+```
+
+Default phase retrieval settings:
 
 ```
 phase_radius = 1
@@ -74,7 +104,8 @@ topm = 20
 temperature = 0.1
 ```
 
-The period length `P` is inferred from the dataset or data file name.
+The period length `P` is inferred from the dataset or data file name unless
+`--period_len` is passed explicitly.
 
-`-Phase` is accepted as a compatibility flag, but `PIBR` always uses
-Phase-aligned IdeaBlock Retrieval.
+`-Phase` is accepted as a compatibility flag and maps to the standalone `PIBR`
+model for older scripts.

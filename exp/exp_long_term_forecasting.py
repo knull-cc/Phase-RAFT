@@ -22,6 +22,24 @@ class Exp_Long_Term_Forecast(Exp_Basic):
     def _uses_retrieval_model(model_name):
         return model_name in ['PIBR']
 
+    @staticmethod
+    def _uses_plain_x_model(model_name):
+        return model_name in ['DLinear', 'Linear', 'NLinear']
+
+    def _forward_model(self, batch_x, index, mode, batch_x_mark, dec_inp, batch_y_mark):
+        if self._uses_retrieval_model(self.args.model):
+            return self.model(
+                batch_x,
+                index,
+                mode=mode,
+                x_mark_enc=batch_x_mark,
+                x_dec=dec_inp,
+                x_mark_dec=batch_y_mark,
+            )
+        if self._uses_plain_x_model(self.args.model):
+            return self.model(batch_x)
+        return self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()
 
@@ -29,7 +47,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         vali_data, vali_loader = self._get_data(flag='val')
         test_data, test_loader = self._get_data(flag='test')
         
-        model.prepare_dataset(train_data, vali_data, test_data)
+        if hasattr(model, 'prepare_dataset'):
+            model.prepare_dataset(train_data, vali_data, test_data)
 
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
@@ -63,14 +82,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
                 # encoder - decoder
-                if self._uses_retrieval_model(self.args.model):
-                    outputs = self.model(batch_x, index, mode=mode)
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
+                        outputs = self._forward_model(batch_x, index, mode, batch_x_mark, dec_inp, batch_y_mark)
                 else:
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                    else:
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    outputs = self._forward_model(batch_x, index, mode, batch_x_mark, dec_inp, batch_y_mark)
                         
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, -self.args.pred_len:, f_dim:]
@@ -128,14 +144,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
 
                 # encoder - decoder
-                if self._uses_retrieval_model(self.args.model):
-                    outputs = self.model(batch_x, index, mode='train')
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
+                        outputs = self._forward_model(batch_x, index, 'train', batch_x_mark, dec_inp, batch_y_mark)
                 else:
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                    else:
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    outputs = self._forward_model(batch_x, index, 'train', batch_x_mark, dec_inp, batch_y_mark)
 
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, -self.args.pred_len:, f_dim:]
@@ -215,14 +228,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                 dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
                 # encoder - decoder
-                if self._uses_retrieval_model(self.args.model):
-                    outputs = self.model(batch_x, index, mode='test')
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
+                        outputs = self._forward_model(batch_x, index, 'test', batch_x_mark, dec_inp, batch_y_mark)
                 else:
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                    else:
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    outputs = self._forward_model(batch_x, index, 'test', batch_x_mark, dec_inp, batch_y_mark)
 
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, -self.args.pred_len:, :]
